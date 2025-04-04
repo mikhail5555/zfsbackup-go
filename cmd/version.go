@@ -24,12 +24,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/log"
 )
+
+var (
+	Commit         = "dirty"
+	ReleaseVersion = "dev"
+	CompileTime    = time.Now().UTC().Format(time.RFC3339)
+)
+
+type Version struct {
+	Name        string
+	Version     string
+	OS          string
+	Arch        string
+	Compiled    string
+	GoVersion   string
+	Commit      string
+	CompileTime string
+}
 
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
@@ -40,20 +58,15 @@ the runtime and architecture.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var output string
 		if config.JSONOutput {
-			j, err := json.Marshal(struct {
-				Name      string
-				Version   string
-				OS        string
-				Arch      string
-				Compiled  string
-				GoVersion string
-			}{
-				Name:      config.ProgramName,
-				Version:   config.Version(),
-				OS:        runtime.GOOS,
-				Arch:      runtime.GOARCH,
-				Compiled:  runtime.Compiler,
-				GoVersion: runtime.Version(),
+			j, err := json.Marshal(Version{
+				Name:        config.ProgramName,
+				Version:     ReleaseVersion,
+				OS:          runtime.GOOS,
+				Arch:        runtime.GOARCH,
+				Compiled:    runtime.Compiler,
+				GoVersion:   runtime.Version(),
+				Commit:      Commit,
+				CompileTime: CompileTime,
 			})
 			if err != nil {
 				log.AppLogger.Errorf("could not dump version info to JSON - %v", err)
@@ -62,8 +75,8 @@ the runtime and architecture.`,
 			output = string(j)
 		} else {
 			output = fmt.Sprintf(
-				"\tProgram Name:\t%s\n\tVersion:\tv%s\n\tOS Target:\t%s\n\tArch Target:\t%s\n\tCompiled With:\t%s\n\tGo Version:\t%s",
-				config.ProgramName, config.Version(), runtime.GOOS, runtime.GOARCH, runtime.Compiler, runtime.Version())
+				"\tProgram Name:\t%s\n\tVersion:\t%s\n\tOS Target:\t%s\n\tArch Target:\t%s\n\tCompiled With:\t%s\n\tGo Version:\t%s\n\tCommit:\t%s\n\tCompile time:\t%s",
+				config.ProgramName, ReleaseVersion, runtime.GOOS, runtime.GOARCH, runtime.Compiler, runtime.Version(), Commit, CompileTime)
 		}
 		fmt.Fprintln(config.Stdout, output)
 		return nil
