@@ -31,9 +31,10 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
-          args: release --clean --config .goreleaser.yaml
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
 
       - name: Mark release as ready
         run: gh release edit $TAG --prerelease=false --latest

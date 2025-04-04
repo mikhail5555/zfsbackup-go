@@ -1,12 +1,15 @@
 version: 2
 
+project_name: zfsbackup-go
+
 before:
   hooks:
     - go mod tidy
     - ./scripts/completions.sh
 
 builds:
-  - env:
+  - id: zfsbackup-go
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -19,6 +22,44 @@ builds:
       - -s -w
       - -X "github.com/someone1/zfsbackup-go/cmd.CompileTime={{ .CommitDate }}"
       - -X "github.com/someone1/zfsbackup-go/cmd.Commit={{ .FullCommit }}"
+
+dockers:
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:latest-amd64"
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:latest-arm64"
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+
+docker_manifests:
+  - name_template: "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:latest"
+    image_templates:
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:latest-amd64"
+      - "ghcr.io/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}:latest-arm64"
 
 archives:
   - name_template: >-
@@ -33,7 +74,7 @@ archives:
 
 release:
   footer: |
-    **Full Changelog**: https://github.com/someone1/zfsbackup-go/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/{{ .Env.REPO_OWNER }}/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
 
 checksum:
   name_template: 'checksums.txt'
