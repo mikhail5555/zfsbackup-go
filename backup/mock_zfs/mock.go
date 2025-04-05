@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	const size = 5 * 1024 * 1024 // 2 MB
+	const size = 5*1024*1024 - 1
 	data := make([]byte, size)
 
 	// Fill with random data

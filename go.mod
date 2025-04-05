@@ -11,7 +11,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/joho/godotenv v1.5.1
 	github.com/juju/ratelimit v1.0.2
-	github.com/klauspost/compress v1.15.10
 	github.com/kurin/blazer v0.5.3
 	github.com/miolini/datacounter v1.0.3
 	github.com/nightlyone/lockfile v1.0.0

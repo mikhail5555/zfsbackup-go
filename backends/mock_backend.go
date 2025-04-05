@@ -51,9 +51,7 @@ func (d *MockBackend) Init(ctx context.Context, conf *BackendConfig, opts ...Opt
 }
 
 func (d *MockBackend) Delete(ctx context.Context, filename string) error {
-	if d.DeleteMock != nil {
-		return d.DeleteMock(ctx, filename)
-	}
+	d.inMemoryStore.Delete(filename)
 	return nil
 }
 
@@ -65,7 +63,7 @@ func (d *MockBackend) PreDownload(ctx context.Context, objects []string) error {
 // Download should not be used with this backend
 func (d *MockBackend) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
 	if value, ok := d.inMemoryStore.Load(filename); ok {
-		return io.NopCloser(value.(*bytes.Buffer)), nil
+		return io.NopCloser(bytes.NewReader(value.([]byte))), nil
 	}
 
 	return nil, errors.New("file not found")
@@ -95,7 +93,11 @@ func (d *MockBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
 		zap.S().Errorf("Mock backend: Upload volume info failed: %v", err)
 		return err
 	}
-	d.inMemoryStore.Store(vol.ObjectName, buffer)
+	d.inMemoryStore.Store(vol.ObjectName, buffer.Bytes())
 	zap.S().Infof("Mock backend: Upload done for: %v, size: %d", vol.ObjectName, n)
 	return nil
+}
+
+func (d *MockBackend) Reset() {
+	d.inMemoryStore.Clear()
 }

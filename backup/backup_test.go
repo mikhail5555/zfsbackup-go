@@ -32,41 +32,11 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/backends"
+	"github.com/someone1/zfsbackup-go/compencrypt"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
-
-// Truly a useless backend
-type mockBackend struct{}
-
-func (m *mockBackend) Init(ctx context.Context, conf *backends.BackendConfig, opts ...backends.Option) error {
-	return nil
-}
-
-func (m *mockBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
-	// make sure we can read the volume
-	_, err := io.ReadAll(vol)
-	return err
-}
-
-func (m *mockBackend) List(ctx context.Context, prefix string) ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockBackend) Close() error { return nil }
-
-func (m *mockBackend) PreDownload(ctx context.Context, objects []string) error { return nil }
-
-func (m *mockBackend) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
-	return nil, nil
-}
-
-func (m *mockBackend) Delete(ctx context.Context, filename string) error { return nil }
-
-type errTestFunc func(error) bool
-
-func nilErrTest(e error) bool { return e == nil }
 
 func fakeExecCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
 	cs := []string{"run", "./mock_zfs"}
@@ -103,6 +73,7 @@ func TestBackup(t *testing.T) {
 
 	undo := SetupMocks(baseSnapshot)
 	defer undo()
+	defer backends.MockBackendImpl.Reset()
 
 	tempDir := os.TempDir()
 	defer os.RemoveAll(tempDir)
@@ -143,4 +114,32 @@ func TestBackup(t *testing.T) {
 	if !jobInfo.EndTime.After(jobInfo.StartTime) {
 		t.Errorf("Expected end time to be after start time")
 	}
+
+	uploadedFiles, _ := backends.MockBackendImpl.List(t.Context(), "")
+	if len(uploadedFiles) != 6 {
+		t.Errorf("Expected 6 files to be uploaded, got %d", len(uploadedFiles))
+	}
+
+	for _, fileName := range uploadedFiles {
+		file, _ := backends.MockBackendImpl.Download(t.Context(), fileName)
+		r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+		defer r.Close()
+
+		content, err := io.ReadAll(r)
+		if err != nil {
+			t.Errorf("failed to read %s: %v", fileName, err)
+		}
+		t.Logf("Read %s: %d", fileName, len(content))
+	}
+
+	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.gz.bin")
+	r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+	defer r.Close()
+
+	manifestContent, err := io.ReadAll(r)
+	if err != nil {
+		t.Errorf("Could not read manifest: %v", err)
+	}
+
+	t.Logf("Manifest content: %s", string(manifestContent))
 }

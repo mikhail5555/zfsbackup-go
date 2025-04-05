@@ -217,9 +217,7 @@ func (j *JobInfo) BackupVolumeObjectName(volumeNumber int64) string {
 }
 
 func (j *JobInfo) volumeNameParts() (nameParts, extensions []string) {
-	extensions = []string{
-		"zst",
-	}
+	extensions = []string{"gz"}
 
 	if len(j.AesEncryptionKey) > 0 {
 		extensions = append(extensions, "bin")
