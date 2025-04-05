@@ -239,9 +239,7 @@ func (v *VolumeInfo) Close() error {
 			return err
 		}
 		v.pw = nil
-	}
-
-	if v.pr != nil {
+	} else if v.pr != nil {
 		if err := v.pr.Close(); err != nil {
 			return err
 		}
@@ -281,9 +279,11 @@ func (v *VolumeInfo) Close() error {
 		v.w = nil
 	}
 
-	if v.r != nil {
-		if err := v.r.Close(); err != nil {
-			return err
+	if v.pr == nil {
+		if v.r != nil {
+			if err := v.r.Close(); err != nil {
+				return err
+			}
 		}
 		v.r = nil
 	}

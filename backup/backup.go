@@ -457,13 +457,6 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 		return nil, err
 	}
 
-	content, err := os.ReadFile(safeManifestFile)
-	if err != nil {
-		zap.S().Errorf("Could not read manifest file - %v", err)
-		return nil, err
-	}
-	zap.S().Infof("content of manifest file: %q", string(content))
-
 	for _, destination := range j.Destinations {
 		if destination == backends.DeleteBackendPrefix+"://" {
 			continue
