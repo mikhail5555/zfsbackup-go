@@ -25,6 +25,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -233,7 +234,7 @@ func TestS3Init(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); !c.errTest(err) {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); !c.errTest(err) {
 			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
 		}
 		if b.prefix != c.prefix {
@@ -257,7 +258,7 @@ func TestS3Close(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 		}
 
@@ -298,10 +299,10 @@ func TestS3Delete(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 		}
-		if err := b.Delete(context.Background(), c.key); !c.errTest(err) {
+		if err := b.Delete(t.Context(), c.key); !c.errTest(err) {
 			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
 		}
 	}
@@ -331,10 +332,10 @@ func TestS3Download(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 		}
-		if _, err := b.Download(context.Background(), c.key); !c.errTest(err) {
+		if _, err := b.Download(t.Context(), c.key); !c.errTest(err) {
 			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
 		}
 	}
@@ -390,11 +391,11 @@ func TestS3Upload(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 		}
 		c.vol.ObjectName = c.key
-		if err := b.Upload(context.Background(), c.vol); !c.errTest(err) {
+		if err := b.Upload(t.Context(), c.vol); !c.errTest(err) {
 			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
 		}
 	}
@@ -423,10 +424,10 @@ func TestS3List(t *testing.T) {
 
 	for idx, c := range testCases {
 		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
+		if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 		}
-		if l, err := b.List(context.Background(), c.prefix); !c.errTest(err) {
+		if l, err := b.List(t.Context(), c.prefix); !c.errTest(err) {
 			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
 		} else if err == nil {
 			if len(l) != 4 {
@@ -468,13 +469,15 @@ func TestS3PreDownload(t *testing.T) {
 	}
 
 	for idx, c := range testCases {
-		b := &AWSS3Backend{}
-		if err := b.Init(context.Background(), c.conf, getOptions()...); err != nil {
-			t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
-		}
-		if err := b.PreDownload(context.Background(), c.keys); !c.errTest(err) {
-			t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
-		}
+		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			b := &AWSS3Backend{}
+			if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
+				t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
+			}
+			if err := b.PreDownload(t.Context(), c.keys); !c.errTest(err) {
+				t.Errorf("%d: Did not get expected error, got %v instead", idx, err)
+			}
+		})
 	}
 }
 
@@ -490,7 +493,7 @@ func TestS3Backend(t *testing.T) {
 		t.Fatalf("Error while trying to get backend: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	awsconf := aws.NewConfig().

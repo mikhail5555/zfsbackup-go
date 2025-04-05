@@ -16,7 +16,7 @@ func TestCompressionAndDecompression(t *testing.T) {
 	compressedBuffer := new(bytes.Buffer)
 
 	// Create a compression writer
-	compWriter := compencrypt.NewCompressionWriter(compressedBuffer)
+	compWriter := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
 
 	// Write data to be compressed
 	n, err := compWriter.Write(originalData)
@@ -33,7 +33,7 @@ func TestCompressionAndDecompression(t *testing.T) {
 	}
 
 	// Create a decompression reader with the compressed data
-	decompReader := compencrypt.NewDecompressionReader(compressedBuffer)
+	decompReader := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
 
 	// Read and decompress the data
 	decompressedData, err := io.ReadAll(decompReader)
@@ -64,7 +64,7 @@ func TestLargeDataCompressionAndDecompression(t *testing.T) {
 	compressedBuffer := new(bytes.Buffer)
 
 	// Create a compression writer
-	compWriter := compencrypt.NewCompressionWriter(compressedBuffer)
+	compWriter := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
 
 	// Write data to be compressed
 	n, err := compWriter.Write(originalData)
@@ -86,7 +86,7 @@ func TestLargeDataCompressionAndDecompression(t *testing.T) {
 		len(originalData), compressedBuffer.Len(), compressionRatio*100)
 
 	// Create a decompression reader with the compressed data
-	decompReader := compencrypt.NewDecompressionReader(compressedBuffer)
+	decompReader := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
 
 	// Read and decompress the data
 	decompressedData, err := io.ReadAll(decompReader)

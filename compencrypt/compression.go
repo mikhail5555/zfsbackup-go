@@ -11,11 +11,11 @@ var _ io.WriteCloser = (*CompressionWriter)(nil)
 
 type CompressionWriter struct {
 	w           *zstd.Encoder
-	destination io.Writer
+	destination io.WriteCloser
 	once        sync.Once
 }
 
-func NewCompressionWriter(destination io.Writer) *CompressionWriter {
+func NewCompressionWriter(destination io.WriteCloser) *CompressionWriter {
 	return &CompressionWriter{
 		destination: destination,
 	}
@@ -42,18 +42,18 @@ func (cw *CompressionWriter) Close() error {
 	if cw.w != nil {
 		return cw.w.Close()
 	}
-	return nil
+	return cw.destination.Close()
 }
 
 var _ io.ReadCloser = (*DecompressionReader)(nil)
 
 type DecompressionReader struct {
 	r      *zstd.Decoder
-	source io.Reader
+	source io.ReadCloser
 	once   sync.Once
 }
 
-func NewDecompressionReader(source io.Reader) *DecompressionReader {
+func NewDecompressionReader(source io.ReadCloser) *DecompressionReader {
 	return &DecompressionReader{
 		source: source,
 	}
@@ -80,5 +80,5 @@ func (dr *DecompressionReader) Close() error {
 	if dr.r != nil {
 		dr.r.Close()
 	}
-	return nil
+	return dr.source.Close()
 }

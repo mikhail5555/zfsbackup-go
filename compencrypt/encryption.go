@@ -65,7 +65,7 @@ func (ew *EncryptionWriter) Close() error {
 	if ew.w != nil {
 		return ew.w.Close()
 	}
-	return nil
+	return ew.destination.Close()
 }
 
 var _ io.ReadCloser = (*DecryptionReader)(nil)
