@@ -29,9 +29,9 @@ import (
 	"sync"
 
 	"github.com/kurin/blazer/b2"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // B2BackendPrefix is the URI prefix used for the B2Backend.
@@ -120,11 +120,11 @@ func (b *B2Backend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
 	sha1Opt := b2.WithAttrsOption(&b2.Attrs{SHA1: vol.SHA1Sum})
 	sha1Opt(w)
 	b2.WithCancelOnError(func() context.Context { return ctx }, func(err error) {
-		log.AppLogger.Warningf("b2 backend: Error canceling large file upload %s - %v", vol.ObjectName, err)
+		zap.S().Warnf("b2 backend: Error canceling large file upload %s - %v", vol.ObjectName, err)
 	})
 
 	if _, err := io.Copy(w, vol); err != nil {
-		log.AppLogger.Debugf("b2 backend: Error while uploading volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("b2 backend: Error while uploading volume %s - %v", vol.ObjectName, err)
 		return err
 	}
 

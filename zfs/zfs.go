@@ -29,8 +29,9 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // ZFSPath is the path to the zfs binary
@@ -58,7 +59,7 @@ func GetSnapshotsAndBookmarks(ctx context.Context, target string) ([]files.Snaps
 	cmd := exec.CommandContext(
 		ctx, ZFSPath, "list", "-H", "-d", "1", "-p", "-t", "snapshot,bookmark", "-r", "-o", "name,creation,type", "-S", "creation", target,
 	)
-	log.AppLogger.Debugf("Getting ZFS Snapshots with command \"%s\"", strings.Join(cmd.Args, " "))
+	zap.S().Debugf("Getting ZFS Snapshots with command \"%s\"", strings.Join(cmd.Args, " "))
 	cmd.Stderr = errB
 	rpipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -100,7 +101,7 @@ func GetZFSProperty(ctx context.Context, prop, target string) (string, error) {
 	b := new(bytes.Buffer)
 	errB := new(bytes.Buffer)
 	cmd := exec.CommandContext(ctx, ZFSPath, "get", "-H", "-p", "-o", "value", prop, target)
-	log.AppLogger.Debugf("Getting ZFS Property with command \"%s\"", strings.Join(cmd.Args, " "))
+	zap.S().Debugf("Getting ZFS Property with command \"%s\"", strings.Join(cmd.Args, " "))
 	cmd.Stdout = b
 	cmd.Stderr = errB
 	err := cmd.Run()
@@ -116,32 +117,32 @@ func GetZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 	zfsArgs := []string{"send"}
 
 	if j.Replication {
-		log.AppLogger.Infof("Enabling the replication (-R) flag on the send.")
+		zap.S().Infof("Enabling the replication (-R) flag on the send.")
 		zfsArgs = append(zfsArgs, "-R")
 	}
 
 	if j.SkipMissing {
-		log.AppLogger.Infof("Enabling the skip-missing (-s) flag on the send.")
+		zap.S().Infof("Enabling the skip-missing (-s) flag on the send.")
 		zfsArgs = append(zfsArgs, "-s")
 	}
 
 	if j.Deduplication {
-		log.AppLogger.Infof("Enabling the deduplication (-D) flag on the send.")
+		zap.S().Infof("Enabling the deduplication (-D) flag on the send.")
 		zfsArgs = append(zfsArgs, "-D")
 	}
 
 	if j.Properties {
-		log.AppLogger.Infof("Enabling the properties (-p) flag on the send.")
+		zap.S().Infof("Enabling the properties (-p) flag on the send.")
 		zfsArgs = append(zfsArgs, "-p")
 	}
 
 	if j.Compressor == files.ZfsCompressor {
-		log.AppLogger.Infof("Enabling the compression (-c) flag on the send.")
+		zap.S().Infof("Enabling the compression (-c) flag on the send.")
 		zfsArgs = append(zfsArgs, "-c")
 	}
 
 	if j.Raw {
-		log.AppLogger.Infof("Enabling the raw (-w) flag on the send.")
+		zap.S().Infof("Enabling the raw (-w) flag on the send.")
 		zfsArgs = append(zfsArgs, "-w")
 	}
 
@@ -152,10 +153,10 @@ func GetZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 		}
 
 		if j.IntermediaryIncremental {
-			log.AppLogger.Infof("Enabling an incremental stream with all intermediary snapshots (-I) on the send to snapshot %s", incrementalName)
+			zap.S().Infof("Enabling an incremental stream with all intermediary snapshots (-I) on the send to snapshot %s", incrementalName)
 			zfsArgs = append(zfsArgs, "-I", incrementalName)
 		} else {
-			log.AppLogger.Infof("Enabling an incremental stream (-i) on the send to snapshot %s", incrementalName)
+			zap.S().Infof("Enabling an incremental stream (-i) on the send to snapshot %s", incrementalName)
 			zfsArgs = append(zfsArgs, "-i", incrementalName)
 		}
 	}
@@ -172,27 +173,27 @@ func GetZFSReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 	zfsArgs := []string{"receive"}
 
 	if j.FullPath {
-		log.AppLogger.Infof("Enabling the full path (-d) flag on the receive.")
+		zap.S().Infof("Enabling the full path (-d) flag on the receive.")
 		zfsArgs = append(zfsArgs, "-d")
 	}
 
 	if j.LastPath {
-		log.AppLogger.Infof("Enabling the last path (-e) flag on the receive.")
+		zap.S().Infof("Enabling the last path (-e) flag on the receive.")
 		zfsArgs = append(zfsArgs, "-e")
 	}
 
 	if j.NotMounted {
-		log.AppLogger.Infof("Enabling the not mounted (-u) flag on the receive.")
+		zap.S().Infof("Enabling the not mounted (-u) flag on the receive.")
 		zfsArgs = append(zfsArgs, "-u")
 	}
 
 	if j.Force {
-		log.AppLogger.Infof("Enabling the forced rollback (-F) flag on the receive.")
+		zap.S().Infof("Enabling the forced rollback (-F) flag on the receive.")
 		zfsArgs = append(zfsArgs, "-F")
 	}
 
 	if j.Origin != "" {
-		log.AppLogger.Infof("Enabling the origin flag (-o) on the receive to %s", j.Origin)
+		zap.S().Infof("Enabling the origin flag (-o) on the receive to %s", j.Origin)
 		zfsArgs = append(zfsArgs, "-o", "origin="+j.Origin)
 	}
 

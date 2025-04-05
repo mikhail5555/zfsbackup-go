@@ -24,20 +24,20 @@ import (
 	"context"
 	"crypto/md5" // nolint:gosec // MD5 not used for cryptographic purposes here
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
 func prepareBackend(ctx context.Context, j *files.JobInfo, backendURI string, uploadBuffer chan bool) (backends.Backend, error) {
-	log.AppLogger.Debugf("Initializing Backend %s", backendURI)
+	zap.S().Debugf("Initializing Backend %s", backendURI)
 	conf := &backends.BackendConfig{
 		MaxParallelUploadBuffer: uploadBuffer,
 		TargetURI:               backendURI,
@@ -86,7 +86,7 @@ func syncCache(ctx context.Context, j *files.JobInfo, localCache string, backend
 	}
 
 	// Check what manifests we have locally, and if we are missing any, download them
-	manifestFiles, ferr := ioutil.ReadDir(localCache)
+	manifestFiles, ferr := os.ReadDir(localCache)
 	if ferr != nil {
 		return nil, nil, fmt.Errorf("could not list files from the local cache dir due to error - %v", ferr)
 	}
@@ -120,7 +120,7 @@ func syncCache(ctx context.Context, j *files.JobInfo, localCache string, backend
 	}
 
 	if len(manifests) > 0 {
-		log.AppLogger.Debugf("Syncing %d manifests to local cache.", len(manifests))
+		zap.S().Debugf("Syncing %d manifests to local cache.", len(manifests))
 
 		// manifests should only contain what we don't have locally
 		for idx, manifest := range manifests {
@@ -139,7 +139,7 @@ func syncCache(ctx context.Context, j *files.JobInfo, localCache string, backend
 func validateSnapShotExists(ctx context.Context, snapshot *files.SnapshotInfo, target string, includeBookmarks bool) (bool, error) {
 	snapshots, err := zfs.GetSnapshotsAndBookmarks(ctx, target)
 	if err != nil {
-		log.AppLogger.Debugf("Could not list snapshots for %s: %v", target, err)
+		zap.S().Debugf("Could not list snapshots for %s: %v", target, err)
 		// TODO: There are some error cases that are ok to ignore!
 		return false, nil
 	}

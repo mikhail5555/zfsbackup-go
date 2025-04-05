@@ -36,10 +36,10 @@ import (
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // AzureBackendPrefix is the URI prefix used for the AzureBackend.
@@ -202,7 +202,7 @@ func (a *AzureBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error 
 
 	err := errg.Wait()
 	if err != nil {
-		log.AppLogger.Debugf("azure backend: Error while uploading volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("azure backend: Error while uploading volume %s - %v", vol.ObjectName, err)
 		return err
 	}
 
@@ -216,7 +216,7 @@ func (a *AzureBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error 
 		ctx, blockIDs, azblob.BlobHTTPHeaders{ContentMD5: md5Raw}, azblob.Metadata{}, azblob.BlobAccessConditions{}, azblob.DefaultAccessTier, azblob.BlobTagsMap{},
 	)
 	if err != nil {
-		log.AppLogger.Debugf("azure backend: Error while finalizing volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("azure backend: Error while finalizing volume %s - %v", vol.ObjectName, err)
 	}
 	return err
 }

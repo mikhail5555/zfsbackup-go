@@ -23,15 +23,16 @@ package files
 import (
 	"bufio"
 	"context"
-	"crypto"
-	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/md5" // nolint:gosec // MD5 not used for cryptographic purposes here
+	"crypto/rand"
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
 	"crypto/sha256"
 	"fmt"
 	"hash"
 	"hash/crc32"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -42,12 +43,9 @@ import (
 	"github.com/juju/ratelimit"
 	gzip "github.com/klauspost/pgzip"
 	"github.com/miolini/datacounter"
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/packet"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/config"
-	"github.com/someone1/zfsbackup-go/log"
-	"github.com/someone1/zfsbackup-go/pgp"
 )
 
 var (
@@ -95,7 +93,7 @@ type VolumeInfo struct {
 	cmd *exec.Cmd
 	// PGP objects
 	pgpw io.WriteCloser
-	pgpr *openpgp.MessageDetails
+	pgpr *cipher.StreamReader
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -122,18 +120,7 @@ func (v *VolumeInfo) Read(p []byte) (int, error) {
 	if v.r == nil {
 		return 0, fmt.Errorf("nothing to read from")
 	}
-	i, err := v.r.Read(p)
-	if err == io.EOF && v.pgpr != nil {
-		if v.pgpr.IsSigned {
-			if v.pgpr.SignatureError != nil {
-				return i, v.pgpr.SignatureError
-			}
-			if v.pgpr.SignedBy == nil {
-				return i, fmt.Errorf("did not have ths key signature to verify the message with")
-			}
-		}
-	}
-	return i, err
+	return v.r.Read(p)
 }
 
 // IsUsingPipe will return true when the volume is a glorified pipe
@@ -203,16 +190,22 @@ func (v *VolumeInfo) Extract(ctx context.Context, j *JobInfo, isManifest bool) e
 		v.isOpened = true
 	}
 
-	if j.EncryptKey != nil || j.SignKey != nil {
-		pgpConfig := new(packet.Config)
-		pgpConfig.DefaultCompressionAlgo = packet.CompressionNone // We will do our own, thank you very much!
-		pgpConfig.DefaultCipher = packet.CipherAES256
-		pgpReader, perr := openpgp.ReadMessage(v.r, pgp.GetCombinedKeyRing(), pgp.PromptFunc, pgpConfig)
-		if perr != nil {
-			return perr
+	if len(j.AesEncryptionKey) > 0 {
+		block, err := aes.NewCipher([]byte(j.AesEncryptionKey))
+		if err != nil {
+			return err
 		}
-		v.pgpr = pgpReader
-		v.r = pgpReader.UnverifiedBody
+
+		iv := make([]byte, aes.BlockSize)
+		if _, err := io.ReadFull(v.r, iv); err != nil {
+			return err
+		}
+
+		stream := cipher.NewCTR(block, iv)
+		reader := &cipher.StreamReader{S: stream, R: v.r}
+
+		v.pgpr = reader
+		v.r = reader
 	}
 
 	var err error
@@ -413,28 +406,28 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*Vol
 		return nil, err
 	}
 
-	// Prepare the Encryption/Signing writer, if required
-	if j.EncryptKey != nil || j.SignKey != nil {
-		pgpConfig := new(packet.Config)
-		pgpConfig.DefaultCompressionAlgo = packet.CompressionNone // We will do our own, thank you very much!
-		pgpConfig.DefaultCipher = packet.CipherAES256
-		pgpConfig.DefaultHash = crypto.SHA256
-		pgpConfig.RSABits = 2048
-		fileHints := new(openpgp.FileHints)
-		fileHints.IsBinary = true
-
-		var pgpWriter io.WriteCloser
-		if j.EncryptKey != nil {
-			if pgpWriter, err = openpgp.Encrypt(v.w, []*openpgp.Entity{j.EncryptKey}, j.SignKey, fileHints, pgpConfig); err != nil {
-				return nil, err
-			}
-		} else {
-			if pgpWriter, err = openpgp.Sign(v.w, j.SignKey, fileHints, pgpConfig); err != nil {
-				return nil, err
-			}
+	if len(j.AesEncryptionKey) > 0 {
+		block, err := aes.NewCipher([]byte(j.AesEncryptionKey))
+		if err != nil {
+			return nil, err
 		}
-		v.pgpw = pgpWriter
-		v.w = pgpWriter
+
+		iv := make([]byte, aes.BlockSize)
+		if _, err := rand.Read(iv); err != nil {
+			return nil, err
+		}
+
+		stream := cipher.NewCTR(block, iv)
+
+		// Write IV at the beginning
+		if _, err := v.w.Write(iv); err != nil {
+			return nil, err
+		}
+
+		writer := &cipher.StreamWriter{S: stream, W: v.w}
+
+		v.pgpw = writer
+		v.w = writer
 	}
 
 	compressorName := j.Compressor
@@ -449,12 +442,12 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*Vol
 		v.w = v.cw
 
 		printCompressCMD.Do(func() {
-			log.AppLogger.Infof("Will be using internal gzip compressor with compression level %d.", j.CompressionLevel)
+			zap.S().Infof("Will be using internal gzip compressor with compression level %d.", j.CompressionLevel)
 		})
 	case "":
-		printCompressCMD.Do(func() { log.AppLogger.Infof("Will not be using any compression.") })
+		printCompressCMD.Do(func() { zap.S().Infof("Will not be using any compression.") })
 	case ZfsCompressor:
-		printCompressCMD.Do(func() { log.AppLogger.Infof("Will send a ZFS compressed stream") })
+		printCompressCMD.Do(func() { zap.S().Infof("Will send a ZFS compressed stream") })
 	default:
 		v.cmd = exec.CommandContext(ctx, compressorName, "-c", fmt.Sprintf("-%d", j.CompressionLevel))
 		v.cmd.Stdout = v.w
@@ -468,7 +461,7 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*Vol
 		v.cmd.Stderr = os.Stderr
 
 		printCompressCMD.Do(func() {
-			log.AppLogger.Infof(
+			zap.S().Infof(
 				"Will be using the external binary %s for compression with compression level %d. The executing command will be: %s",
 				j.Compressor, j.CompressionLevel, strings.Join(v.cmd.Args, " "),
 			)
@@ -543,7 +536,7 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 			v.r = ratelimit.Reader(v.r, config.BackupUploadBucket)
 		}
 	} else {
-		tempFile, err := ioutil.TempFile(config.BackupTempdir, config.ProgramName)
+		tempFile, err := os.CreateTemp(config.BackupTempdir, config.ProgramName)
 		if err != nil {
 			return nil, err
 		}

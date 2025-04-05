@@ -27,12 +27,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/backup"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
@@ -40,7 +40,6 @@ var (
 	jobInfo         files.JobInfo
 	fullIncremental string
 	maxUploadSpeed  uint64
-	passphrase      []byte
 )
 
 // sendCmd represents the send command
@@ -50,18 +49,11 @@ var sendCmd = &cobra.Command{
 	Long:    `send take a subset of the`,
 	PreRunE: validateSendFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		log.AppLogger.Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
-		log.AppLogger.Infof("Limiting the number of parallel uploads to %d", jobInfo.MaxParallelUploads)
-		log.AppLogger.Infof("Max Backoff Time will be %v", jobInfo.MaxBackoffTime)
-		log.AppLogger.Infof("Max Upload Retry Time will be %v", jobInfo.MaxRetryTime)
-		log.AppLogger.Infof("Upload Chunk Size will be %dMiB", jobInfo.UploadChunkSize)
-		if jobInfo.EncryptKey != nil {
-			log.AppLogger.Infof("Will be using encryption key for %s", jobInfo.EncryptTo)
-		}
-
-		if jobInfo.SignKey != nil {
-			log.AppLogger.Infof("Will be signed from %s", jobInfo.SignFrom)
-		}
+		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
+		zap.S().Infof("Limiting the number of parallel uploads to %d", jobInfo.MaxParallelUploads)
+		zap.S().Infof("Max Backoff Time will be %v", jobInfo.MaxBackoffTime)
+		zap.S().Infof("Max Upload Retry Time will be %v", jobInfo.MaxRetryTime)
+		zap.S().Infof("Upload Chunk Size will be %dMiB", jobInfo.UploadChunkSize)
 
 		return backup.Backup(cmd.Context(), &jobInfo)
 	},
@@ -226,17 +218,17 @@ func updateJobInfo(args []string) error {
 	jobInfo.Destinations = strings.Split(args[1], ",")
 
 	if len(jobInfo.Destinations) > 1 && jobInfo.MaxFileBuffer == 0 {
-		log.AppLogger.Errorf("Specifying multiple destinations and a MaxFileBuffer size of 0 is unsupported.")
+		zap.S().Errorf("Specifying multiple destinations and a MaxFileBuffer size of 0 is unsupported.")
 		return errInvalidInput
 	}
 
 	for _, destination := range jobInfo.Destinations {
 		_, err := backends.GetBackendForURI(destination)
 		if err == backends.ErrInvalidPrefix {
-			log.AppLogger.Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
+			zap.S().Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
 			return err
 		} else if err == backends.ErrInvalidURI {
-			log.AppLogger.Errorf("Unsupported destination URI, was given %s", destination)
+			zap.S().Errorf("Unsupported destination URI, was given %s", destination)
 			return err
 		}
 	}
@@ -244,13 +236,13 @@ func updateJobInfo(args []string) error {
 	// If we aren't using a "smart" option, rely on the user to provide the snapshots to use!
 	if !usingSmartOption() {
 		if len(parts) != 2 {
-			log.AppLogger.Errorf("Invalid base snapshot provided. Expected format <volume>@<snapshot>, got %s instead", args[0])
+			zap.S().Errorf("Invalid base snapshot provided. Expected format <volume>@<snapshot>, got %s instead", args[0])
 			return errInvalidInput
 		}
 		jobInfo.BaseSnapshot = files.SnapshotInfo{Name: parts[1]}
 		creationTime, err := zfs.GetCreationDate(context.TODO(), args[0])
 		if err != nil {
-			log.AppLogger.Errorf("Error trying to get creation date of specified base snapshot - %v", err)
+			zap.S().Errorf("Error trying to get creation date of specified base snapshot - %v", err)
 			return err
 		}
 		jobInfo.BaseSnapshot.CreationTime = creationTime
@@ -269,7 +261,7 @@ func updateJobInfo(args []string) error {
 
 			creationTime, err = zfs.GetCreationDate(context.TODO(), targetName)
 			if err != nil {
-				log.AppLogger.Errorf("Error trying to get creation date of specified incremental snapshot/bookmark - %v", err)
+				zap.S().Errorf("Error trying to get creation date of specified incremental snapshot/bookmark - %v", err)
 				return err
 			}
 			jobInfo.IncrementalSnapshot.CreationTime = creationTime
@@ -287,18 +279,18 @@ func updateJobInfo(args []string) error {
 			onlyOneCheck++
 		}
 		if onlyOneCheck > 1 {
-			log.AppLogger.Errorf("Please specify only one \"smart\" option at a time")
+			zap.S().Errorf("Please specify only one \"smart\" option at a time")
 			return errInvalidInput
 		}
 		if len(parts) != 1 {
-			log.AppLogger.Errorf("When using a smart option, please only specify the volume to backup, do not include any snapshot information.")
+			zap.S().Errorf("When using a smart option, please only specify the volume to backup, do not include any snapshot information.")
 			return errInvalidInput
 		}
 		if err := backup.ProcessSmartOptions(context.Background(), &jobInfo); err != nil {
-			log.AppLogger.Errorf("Error while trying to process smart option - %v", err)
+			zap.S().Errorf("Error while trying to process smart option - %v", err)
 			return err
 		}
-		log.AppLogger.Debugf("Utilizing smart option.")
+		zap.S().Debugf("Utilizing smart option.")
 	}
 
 	return nil
@@ -314,17 +306,13 @@ func validateSendFlags(cmd *cobra.Command, args []string) error {
 		return errInvalidInput
 	}
 
-	if err := loadSendKeys(); err != nil {
-		return err
-	}
-
 	if jobInfo.IncrementalSnapshot.Name != "" && fullIncremental != "" {
-		log.AppLogger.Errorf("The flags -i and -I are mutually exclusive. Please specify only one of these flags.")
+		zap.S().Errorf("The flags -i and -I are mutually exclusive. Please specify only one of these flags.")
 		return errInvalidInput
 	}
 
 	if err := jobInfo.ValidateSendFlags(); err != nil {
-		log.AppLogger.Error(err)
+		zap.S().Error(err)
 		return err
 	}
 

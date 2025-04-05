@@ -27,11 +27,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/backup"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
@@ -42,7 +42,7 @@ var receiveCmd = &cobra.Command{
 	Long:    `receive will restore a snapshot of a ZFS volume similar to how the "zfs recv" command works.`,
 	PreRunE: validateReceiveFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		log.AppLogger.Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
+		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
 
 		if jobInfo.AutoRestore {
 			return backup.AutoRestore(cmd.Context(), &jobInfo)
@@ -155,22 +155,18 @@ func validateReceiveFlags(cmd *cobra.Command, args []string) error {
 		return errInvalidInput
 	}
 
-	if err := loadReceiveKeys(); err != nil {
-		return err
-	}
-
 	jobInfo.StartTime = time.Now()
 
 	parts := strings.Split(args[0], "@")
 	if len(parts) != 2 && !jobInfo.AutoRestore {
-		log.AppLogger.Errorf("Invalid base snapshot provided. Expected format <volume>@<snapshot>, got %s instead", args[0])
+		zap.S().Errorf("Invalid base snapshot provided. Expected format <volume>@<snapshot>, got %s instead", args[0])
 		return errInvalidInput
 	} else if len(parts) == 2 {
 		jobInfo.BaseSnapshot = files.SnapshotInfo{Name: parts[1]}
 	}
 
 	if jobInfo.FullPath && jobInfo.LastPath {
-		log.AppLogger.Errorf("The -d and -e options are mutually exclusive, please select only one!")
+		zap.S().Errorf("The -d and -e options are mutually exclusive, please select only one!")
 		return errInvalidInput
 	}
 
@@ -180,7 +176,7 @@ func validateReceiveFlags(cmd *cobra.Command, args []string) error {
 
 	// Intelligently restore to the snapshot wanted
 	if jobInfo.AutoRestore && jobInfo.IncrementalSnapshot.Name != "" {
-		log.AppLogger.Errorf("Cannot request auto restore option and provide an incremental snapshot to restore from.")
+		zap.S().Errorf("Cannot request auto restore option and provide an incremental snapshot to restore from.")
 		return errInvalidInput
 	}
 
@@ -206,10 +202,10 @@ func validateReceiveFlags(cmd *cobra.Command, args []string) error {
 	for _, destination := range jobInfo.Destinations {
 		_, err := backends.GetBackendForURI(destination)
 		if err == backends.ErrInvalidPrefix {
-			log.AppLogger.Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
+			zap.S().Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
 			return errInvalidInput
 		} else if err == backends.ErrInvalidURI {
-			log.AppLogger.Errorf("Invalid destination URI, was given %s", destination)
+			zap.S().Errorf("Invalid destination URI, was given %s", destination)
 			return errInvalidInput
 		}
 	}

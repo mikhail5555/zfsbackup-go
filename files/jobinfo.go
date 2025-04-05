@@ -26,10 +26,8 @@ import (
 	"strings"
 	"time"
 
-	humanize "github.com/dustin/go-humanize"
-	"golang.org/x/crypto/openpgp"
-
-	"github.com/someone1/zfsbackup-go/log"
+	"github.com/dustin/go-humanize"
+	"go.uber.org/zap"
 )
 
 var disallowedSeps = regexp.MustCompile(`^[\w\-:\.]+`) // Disallowed by ZFS
@@ -51,8 +49,6 @@ type JobInfo struct {
 	ZFSStreamBytes          uint64
 	Volumes                 []*VolumeInfo
 	Version                 float64
-	EncryptTo               string
-	SignFrom                string
 	Replication             bool
 	SkipMissing             bool
 	Deduplication           bool
@@ -73,17 +69,16 @@ type JobInfo struct {
 	LocalVolume string `json:"-"`
 	AutoRestore bool   `json:"-"`
 
-	Destinations       []string        `json:"-"`
-	VolumeSize         uint64          `json:"-"`
-	ManifestPrefix     string          `json:"-"`
-	MaxBackoffTime     time.Duration   `json:"-"`
-	MaxRetryTime       time.Duration   `json:"-"`
-	MaxParallelUploads int             `json:"-"`
-	MaxFileBuffer      int             `json:"-"`
-	EncryptKey         *openpgp.Entity `json:"-"`
-	SignKey            *openpgp.Entity `json:"-"`
-	ParentSnap         *JobInfo        `json:"-"`
-	UploadChunkSize    int             `json:"-"`
+	Destinations       []string      `json:"-"`
+	VolumeSize         uint64        `json:"-"`
+	ManifestPrefix     string        `json:"-"`
+	MaxBackoffTime     time.Duration `json:"-"`
+	MaxRetryTime       time.Duration `json:"-"`
+	MaxParallelUploads int           `json:"-"`
+	MaxFileBuffer      int           `json:"-"`
+	AesEncryptionKey   string        `json:"-"`
+	ParentSnap         *JobInfo      `json:"-"`
+	UploadChunkSize    int           `json:"-"`
 }
 
 // SnapshotInfo represents a snapshot with relevant information.
@@ -173,7 +168,7 @@ func (j *JobInfo) ValidateSendFlags() error {
 	}
 
 	if j.MaxFileBuffer < j.MaxParallelUploads {
-		log.AppLogger.Warningf(
+		zap.S().Warnf(
 			"The number of parallel uploads (%d) is greater than the number of active files allowed (%d), this may result in an unachievable max parallel upload target.", //nolint:lll // Long log output
 			j.MaxParallelUploads,
 			j.MaxFileBuffer,
@@ -230,8 +225,8 @@ func (j *JobInfo) BackupVolumeObjectName(volumeNumber int64) string {
 func (j *JobInfo) volumeNameParts(isManifest bool) (nameParts, extensions []string) {
 	extensions = make([]string, 0, 2)
 
-	if j.EncryptKey != nil || j.SignKey != nil {
-		extensions = append(extensions, "pgp")
+	if len(j.AesEncryptionKey) > 0 {
+		extensions = append(extensions, "bin")
 	}
 
 	compressorName := j.Compressor

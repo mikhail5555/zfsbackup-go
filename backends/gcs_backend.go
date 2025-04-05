@@ -31,7 +31,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
+	"go.uber.org/zap"
 )
 
 // GoogleCloudStorageBackendPrefix is the URI prefix used for the GoogleCloudStorageBackend.
@@ -115,7 +115,7 @@ func (g *GoogleCloudStorageBackend) Upload(ctx context.Context, vol *files.Volum
 	w.ChunkSize = g.conf.UploadChunkSize
 
 	if _, err := io.Copy(w, vol); err != nil {
-		log.AppLogger.Debugf("gs backend: Error while uploading volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("gs backend: Error while uploading volume %s - %v", vol.ObjectName, err)
 		return err
 	}
 	return w.Close()

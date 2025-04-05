@@ -30,9 +30,10 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // List will sync the manifests found in the target destination to the local cache
@@ -48,7 +49,7 @@ func List(pctx context.Context, jobInfo *files.JobInfo, startswith string, befor
 	target := jobInfo.Destinations[0]
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
 	if berr != nil {
-		log.AppLogger.Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
+		zap.S().Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
 		return berr
 	}
 	defer backend.Close()
@@ -56,14 +57,14 @@ func List(pctx context.Context, jobInfo *files.JobInfo, startswith string, befor
 	// Get the local cache dir
 	localCachePath, cerr := getCacheDir(jobInfo.Destinations[0])
 	if cerr != nil {
-		log.AppLogger.Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
+		zap.S().Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
 		return cerr
 	}
 
 	// Sync the local cache
 	safeManifests, localOnlyFiles, serr := syncCache(ctx, jobInfo, localCachePath, backend)
 	if serr != nil {
-		log.AppLogger.Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
+		zap.S().Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
 		return serr
 	}
 
@@ -113,19 +114,19 @@ func List(pctx context.Context, jobInfo *files.JobInfo, startswith string, befor
 				manifestPath := filepath.Join(localCachePath, filename)
 				decodedManifest, derr := readManifest(ctx, manifestPath, jobInfo)
 				if derr != nil {
-					log.AppLogger.Warningf("Could not read local only manifest %s due to error %v", manifestPath, derr)
+					zap.S().Warnf("Could not read local only manifest %s due to error %v", manifestPath, derr)
 					continue
 				}
 				localOnlyOuput = append(localOnlyOuput, decodedManifest.String())
 			}
-			log.AppLogger.Infof(strings.Join(localOnlyOuput, "\n"))
+			zap.S().Infof(strings.Join(localOnlyOuput, "\n"))
 		}
 		fmt.Fprintln(config.Stdout, strings.Join(output, "\n"))
 	} else {
 		organizedManifests := linkManifests(decodedManifests)
 		j, jerr := json.Marshal(organizedManifests)
 		if jerr != nil {
-			log.AppLogger.Errorf("could not marshal results to JSON - %v", jerr)
+			zap.S().Errorf("could not marshal results to JSON - %v", jerr)
 			return jerr
 		}
 
@@ -147,7 +148,7 @@ func readAndSortManifests(
 		manifestPath := filepath.Join(localCachePath, manifest)
 		decodedManifest, oerr := readManifest(ctx, manifestPath, jobInfo)
 		if oerr != nil {
-			log.AppLogger.Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
+			zap.S().Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
 			return nil, oerr
 		}
 		decodedManifests = append(decodedManifests, decodedManifest)
@@ -205,7 +206,7 @@ func linkManifests(manifests []*files.JobInfo) map[string][]*files.JobInfo {
 			if psnap, ok := manifestsByID[manifestID]; ok {
 				val.ParentSnap = psnap
 			} else {
-				log.AppLogger.Warningf("Could not find matching parent for %v", val)
+				zap.S().Warnf("Could not find matching parent for %v", val)
 			}
 		}
 	}

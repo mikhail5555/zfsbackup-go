@@ -41,9 +41,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager/s3manageriface"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // AWSS3BackendPrefix is the URI prefix used for the AWSS3Backend.
@@ -64,7 +64,7 @@ type AWSS3Backend struct {
 type logger struct{}
 
 func (l logger) Log(args ...interface{}) {
-	log.AppLogger.Debugf("s3 backend:", args...)
+	zap.S().Debugf("s3 backend: %v", args...)
 }
 
 type withS3Client struct{ client s3iface.S3API }
@@ -241,7 +241,7 @@ func (a *AWSS3Backend) Upload(ctx context.Context, vol *files.VolumeInfo) error 
 	}, s3manager.WithUploaderRequestOptions(options...))
 
 	if err != nil {
-		log.AppLogger.Debugf("s3 backend: Error while uploading volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("s3 backend: Error while uploading volume %s - %v", vol.ObjectName, err)
 	}
 	return err
 }
@@ -265,7 +265,7 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 		restoreTier = s3.TierBulk
 	}
 	var bytesToRestore int64
-	log.AppLogger.Debugf("s3 backend: will use the %s restore tier when trying to restore from Glacier.", restoreTier)
+	zap.S().Debugf("s3 backend: will use the %s restore tier when trying to restore from Glacier.", restoreTier)
 	for _, key := range keys {
 		key = a.prefix + key
 		resp, err := a.client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
@@ -276,7 +276,7 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 			return err
 		}
 		if resp.StorageClass != nil && *resp.StorageClass == s3.ObjectStorageClassGlacier {
-			log.AppLogger.Debugf("s3 backend: key %s will be restored from the Glacier storage class.", key)
+			zap.S().Debugf("s3 backend: key %s will be restored from the Glacier storage class.", key)
 			bytesToRestore += *resp.ContentLength
 			// Let's Start a restore
 			toRestore = append(toRestore, key)
@@ -292,14 +292,14 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 			})
 			if rerr != nil {
 				if aerr, ok := rerr.(awserr.Error); ok && aerr.Code() != "RestoreAlreadyInProgress" {
-					log.AppLogger.Debugf("s3 backend: error trying to restore key %s - %s: %s", key, aerr.Code(), aerr.Message())
+					zap.S().Debugf("s3 backend: error trying to restore key %s - %s: %s", key, aerr.Code(), aerr.Message())
 					return rerr
 				}
 			}
 		}
 	}
 	if len(toRestore) > 0 {
-		log.AppLogger.Infof(
+		zap.S().Infof(
 			"s3 backend: waiting for %d objects to restore from Glacier totaling %d bytes (this could take several hours)",
 			len(toRestore), bytesToRestore,
 		)
@@ -323,7 +323,7 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 				}
 			} else {
 				backoffCount = 1
-				log.AppLogger.Debugf("s3 backend: key %s restored.", key)
+				zap.S().Debugf("s3 backend: key %s restored.", key)
 			}
 		}
 	}

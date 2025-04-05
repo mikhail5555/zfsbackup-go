@@ -35,11 +35,11 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
@@ -59,7 +59,7 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 	target := jobInfo.Destinations[0]
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
 	if berr != nil {
-		log.AppLogger.Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
+		zap.S().Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
 		return berr
 	}
 	defer backend.Close()
@@ -67,14 +67,14 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Get the local cache dir
 	localCachePath, cerr := getCacheDir(jobInfo.Destinations[0])
 	if cerr != nil {
-		log.AppLogger.Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
+		zap.S().Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
 		return cerr
 	}
 
 	// Sync the local cache
 	safeManifests, _, serr := syncCache(ctx, jobInfo, localCachePath, backend)
 	if serr != nil {
-		log.AppLogger.Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
+		zap.S().Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
 		return serr
 	}
 
@@ -86,15 +86,15 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 	var ok bool
 	var volumeSnaps []*files.JobInfo
 	if volumeSnaps, ok = manifestTree[jobInfo.VolumeName]; !ok {
-		log.AppLogger.Errorf("Could not find any snapshots for volume %s, none found on target.", jobInfo.VolumeName)
+		zap.S().Errorf("Could not find any snapshots for volume %s, none found on target.", jobInfo.VolumeName)
 		return errors.New("could not determine any snapshots for provided volume")
 	}
 
 	// Restore to the latest snapshot available for the volume provided if no snapshot was provided
 	if jobInfo.BaseSnapshot.Name == "" {
-		log.AppLogger.Infof("Trying to determine latest snapshot for volume %s.", jobInfo.VolumeName)
+		zap.S().Infof("Trying to determine latest snapshot for volume %s.", jobInfo.VolumeName)
 		jobInfo.BaseSnapshot = (volumeSnaps[len(volumeSnaps)-1].BaseSnapshot)
-		log.AppLogger.Infof("Restoring to snapshot %s.", jobInfo.BaseSnapshot.Name)
+		zap.S().Infof("Restoring to snapshot %s.", jobInfo.BaseSnapshot.Name)
 	}
 
 	// Find the matching backup job for the snapshot we want to restore to
@@ -106,13 +106,13 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 		}
 	}
 	if jobToRestore == nil {
-		log.AppLogger.Errorf("Could not find the snapshot %v for volume %s on backend.", jobInfo.BaseSnapshot.Name, jobInfo.VolumeName)
+		zap.S().Errorf("Could not find the snapshot %v for volume %s on backend.", jobInfo.BaseSnapshot.Name, jobInfo.VolumeName)
 		return errors.New("could not find snapshot provided")
 	}
 
 	// We have the snapshot we'd like to restore to, let's figure out whats already found locally and restore as required
 	jobsToRestore := make([]*files.JobInfo, 0, 10)
-	log.AppLogger.Infof("Calculating how to restore to %s.", jobInfo.BaseSnapshot.Name)
+	zap.S().Infof("Calculating how to restore to %s.", jobInfo.BaseSnapshot.Name)
 	volume := jobInfo.LocalVolume
 	parts := strings.Split(jobInfo.VolumeName, "/")
 	if jobInfo.FullPath {
@@ -133,7 +133,7 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 	if jobInfo.Origin != "" {
 		originSnapshot, oerr := zfs.GetSnapshotsAndBookmarks(ctx, jobInfo.Origin)
 		if oerr != nil {
-			log.AppLogger.Errorf("Could not get origin snapshot %s info due to error: %v", jobInfo.Origin, oerr)
+			zap.S().Errorf("Could not get origin snapshot %s info due to error: %v", jobInfo.Origin, oerr)
 			return oerr
 		}
 
@@ -141,7 +141,7 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 			// The origin snapshot can be added as an existing snapshot we can start the restore from
 			snapshots = append(snapshots, originSnapshot[0])
 		} else {
-			log.AppLogger.Errorf("Could not find origin snapshot %s", jobInfo.Origin)
+			zap.S().Errorf("Could not find origin snapshot %s", jobInfo.Origin)
 			return fmt.Errorf("could not find origin snapshot %s", jobInfo.Origin)
 		}
 	}
@@ -152,14 +152,14 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 			break
 		}
 
-		log.AppLogger.Infof("Adding backup job for %s to the restore list.", jobToRestore.BaseSnapshot.Name)
+		zap.S().Infof("Adding backup job for %s to the restore list.", jobToRestore.BaseSnapshot.Name)
 		jobsToRestore = append(jobsToRestore, jobToRestore)
 		if jobToRestore.IncrementalSnapshot.Name == "" {
 			// This is a full backup, no need to go further back
 			break
 		}
 		if jobToRestore.ParentSnap == nil {
-			log.AppLogger.Errorf(
+			zap.S().Errorf(
 				"Want to restore parent snap %s but it is not found in the backend, aborting.",
 				jobToRestore.IncrementalSnapshot.Name,
 			)
@@ -168,7 +168,7 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 		jobToRestore = jobToRestore.ParentSnap
 	}
 
-	log.AppLogger.Infof("Need to restore %d snapshots.", len(jobsToRestore))
+	zap.S().Infof("Need to restore %d snapshots.", len(jobsToRestore))
 
 	// We have a list of snapshots we need to restore, start at the end and work our way down
 	for i := len(jobsToRestore) - 1; i >= 0; i-- {
@@ -177,14 +177,14 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 		jobInfo.Volumes = jobsToRestore[i].Volumes
 		jobInfo.Compressor = jobsToRestore[i].Compressor
 		jobInfo.Separator = jobsToRestore[i].Separator
-		log.AppLogger.Infof("Restoring snapshot %s (%d/%d)", jobInfo.BaseSnapshot.Name, len(jobsToRestore)-i, len(jobsToRestore))
+		zap.S().Infof("Restoring snapshot %s (%d/%d)", jobInfo.BaseSnapshot.Name, len(jobsToRestore)-i, len(jobsToRestore))
 		if err := Receive(ctx, jobInfo); err != nil {
-			log.AppLogger.Errorf("Failed to restore snapshot.")
+			zap.S().Errorf("Failed to restore snapshot.")
 			return err
 		}
 	}
 
-	log.AppLogger.Noticef("Done.")
+	zap.S().Debugf("Done.")
 
 	return nil
 }
@@ -200,7 +200,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Prepare the backend client
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
 	if berr != nil {
-		log.AppLogger.Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
+		zap.S().Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
 		return berr
 	}
 	defer backend.Close()
@@ -208,7 +208,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Get the local cache dir
 	localCachePath, cerr := getCacheDir(target)
 	if cerr != nil {
-		log.AppLogger.Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
+		zap.S().Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
 		return cerr
 	}
 
@@ -226,10 +226,10 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 
 	if jobInfo.BaseSnapshot.CreationTime.IsZero() {
 		if ok, verr := validateSnapShotExists(ctx, &jobInfo.BaseSnapshot, volume, false); verr != nil {
-			log.AppLogger.Errorf("Cannot validate if selected base snapshot exists due to error - %v", verr)
+			zap.S().Errorf("Cannot validate if selected base snapshot exists due to error - %v", verr)
 			return verr
 		} else if ok {
-			log.AppLogger.Noticef("Selected base snapshot already exists, nothing to do!")
+			zap.S().Debugf("Selected base snapshot already exists, nothing to do!")
 			return nil
 		}
 	}
@@ -237,10 +237,10 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Check that we have the parent snap shot this wants to restore from
 	if jobInfo.IncrementalSnapshot.Name != "" && jobInfo.IncrementalSnapshot.CreationTime.IsZero() {
 		if ok, verr := validateSnapShotExists(ctx, &jobInfo.IncrementalSnapshot, volume, false); verr != nil {
-			log.AppLogger.Errorf("Cannot validate if selected incremental snapshot exists due to error - %v", verr)
+			zap.S().Errorf("Cannot validate if selected incremental snapshot exists due to error - %v", verr)
 			return verr
 		} else if !ok {
-			log.AppLogger.Errorf("Selected incremental snapshot does not exist!")
+			zap.S().Errorf("Selected incremental snapshot does not exist!")
 			return fmt.Errorf("selected incremental snapshot does not exist")
 		}
 	}
@@ -255,7 +255,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if bErr := backend.PreDownload(ctx, []string{manifestObjectName}); bErr != nil {
-				log.AppLogger.Errorf("Error trying to pre download manifest volume %s - %v", manifestObjectName, bErr)
+				zap.S().Errorf("Error trying to pre download manifest volume %s - %v", manifestObjectName, bErr)
 				return bErr
 			}
 			// Try and download the manifest file from the backend
@@ -265,14 +265,12 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 			manifest, err = readManifest(ctx, safeManifestPath, jobInfo)
 		}
 		if err != nil {
-			log.AppLogger.Errorf("Error trying to retrieve manifest volume - %v", err)
+			zap.S().Errorf("Error trying to retrieve manifest volume - %v", err)
 			return err
 		}
 	}
 
 	manifest.ManifestPrefix = jobInfo.ManifestPrefix
-	manifest.SignKey = jobInfo.SignKey
-	manifest.EncryptKey = jobInfo.EncryptKey
 
 	// Get list of Objects
 	toDownload := make([]string, len(manifest.Volumes))
@@ -283,7 +281,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// PreDownload step
 	err = backend.PreDownload(ctx, toDownload)
 	if err != nil {
-		log.AppLogger.Errorf("Error trying to pre download backup set volumes - %v", err)
+		zap.S().Errorf("Error trying to pre download backup set volumes - %v", err)
 		return err
 	}
 	toDownload = nil
@@ -338,15 +336,15 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 					operation := func() error {
 						oerr := processSequence(ctx, sequence, backend, usePipe)
 						if oerr != nil {
-							log.AppLogger.Warningf("error trying to download file %s - %v", sequence.volume.ObjectName, oerr)
+							zap.S().Warnf("error trying to download file %s - %v", sequence.volume.ObjectName, oerr)
 						}
 						return oerr
 					}
 
-					log.AppLogger.Debugf("Downloading volume %s.", sequence.volume.ObjectName)
+					zap.S().Debugf("Downloading volume %s.", sequence.volume.ObjectName)
 
 					if berr := backoff.Retry(operation, retryconf); berr != nil {
-						log.AppLogger.Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, berr)
+						zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, berr)
 						return berr
 					}
 				}
@@ -378,24 +376,24 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Wait for processes to finish
 	err = wg.Wait()
 	if err != nil {
-		log.AppLogger.Errorf("There was an error during the restore process, aborting: %v", err)
+		zap.S().Errorf("There was an error during the restore process, aborting: %v", err)
 		return err
 	}
 
-	log.AppLogger.Noticef("Done. Elapsed Time: %v", time.Since(jobInfo.StartTime))
+	zap.S().Debugf("Done. Elapsed Time: %v", time.Since(jobInfo.StartTime))
 	return nil
 }
 
 func processSequence(ctx context.Context, sequence downloadSequence, backend backends.Backend, usePipe bool) error {
 	r, rerr := backend.Download(ctx, sequence.volume.ObjectName)
 	if rerr != nil {
-		log.AppLogger.Infof("Could not get %s due to error %v.", sequence.volume.ObjectName, rerr)
+		zap.S().Infof("Could not get %s due to error %v.", sequence.volume.ObjectName, rerr)
 		return rerr
 	}
 	defer r.Close()
 	vol, err := files.CreateSimpleVolume(ctx, usePipe)
 	if err != nil {
-		log.AppLogger.Noticef("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
+		zap.S().Debugf("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		return err
 	}
 
@@ -406,12 +404,12 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 
 	_, err = io.Copy(vol, r)
 	if err != nil {
-		log.AppLogger.Noticef("Could not download file %s to the local cache dir due to error - %v.", sequence.volume.ObjectName, err)
+		zap.S().Debugf("Could not download file %s to the local cache dir due to error - %v.", sequence.volume.ObjectName, err)
 		if err = vol.Close(); err != nil {
-			log.AppLogger.Warningf("Could not close volume %s due to error - %v", sequence.volume.ObjectName, err)
+			zap.S().Warnf("Could not close volume %s due to error - %v", sequence.volume.ObjectName, err)
 		}
 		if err = vol.DeleteVolume(); err != nil {
-			log.AppLogger.Warningf("Could not delete volume %s due to error - %v", sequence.volume.ObjectName, err)
+			zap.S().Warnf("Could not delete volume %s due to error - %v", sequence.volume.ObjectName, err)
 		}
 		if usePipe {
 			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
@@ -419,13 +417,13 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		return err
 	}
 	if cerr := vol.Close(); cerr != nil {
-		log.AppLogger.Noticef("Could not close temporary file to download %s due to error - %v.", sequence.volume.ObjectName, cerr)
+		zap.S().Debugf("Could not close temporary file to download %s due to error - %v.", sequence.volume.ObjectName, cerr)
 		return cerr
 	}
 
 	// Verify the SHA256 Hash, if it doesn't match, ditch it!
 	if vol.SHA256Sum != sequence.volume.SHA256Sum {
-		log.AppLogger.Infof(
+		zap.S().Infof(
 			"Hash mismatch for %s, got %s but expected %s. Retrying.",
 			sequence.volume.ObjectName, vol.SHA256Sum, sequence.volume.SHA256Sum,
 		)
@@ -433,14 +431,14 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
 		}
 		if err = vol.DeleteVolume(); err != nil {
-			log.AppLogger.Noticef("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
+			zap.S().Debugf("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		}
 		return fmt.Errorf(
 			"SHA256 hash mismatch for %s, got %s but expected %s",
 			sequence.volume.ObjectName, vol.SHA256Sum, sequence.volume.SHA256Sum,
 		)
 	}
-	log.AppLogger.Debugf("Downloaded %s.", sequence.volume.ObjectName)
+	zap.S().Debugf("Downloaded %s.", sequence.volume.ObjectName)
 
 	if !usePipe {
 		sequence.c <- vol
@@ -459,10 +457,10 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 	group, ctx = errgroup.WithContext(ctx)
 
 	// Start the zfs receive command
-	log.AppLogger.Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
+	zap.S().Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
 	err := cmd.Start()
 	if err != nil {
-		log.AppLogger.Errorf("Error starting zfs command - %v", err)
+		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
 
@@ -470,12 +468,12 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			err = cmd.Process.Kill()
 			if err != nil {
-				log.AppLogger.Errorf("Could not kill zfs send command due to error - %v", err)
+				zap.S().Errorf("Could not kill zfs send command due to error - %v", err)
 				return
 			}
 			err = cmd.Process.Release()
 			if err != nil {
-				log.AppLogger.Errorf("Could not release resources from zfs send command due to error - %v", err)
+				zap.S().Errorf("Could not release resources from zfs send command due to error - %v", err)
 				return
 			}
 		}
@@ -490,24 +488,24 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 				if !ok {
 					return nil
 				}
-				log.AppLogger.Debugf("Processing %s.", vol.ObjectName)
+				zap.S().Debugf("Processing %s.", vol.ObjectName)
 				eerr := vol.Extract(ctx, j, false)
 				if eerr != nil {
-					log.AppLogger.Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
+					zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
 					return err
 				}
 				_, eerr = io.Copy(cout, vol)
 				if eerr != nil {
-					log.AppLogger.Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
+					zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
 					return eerr
 				}
 				if err = vol.Close(); err != nil {
-					log.AppLogger.Warningf("Could not close volume %s due to error - %v", vol.ObjectName, err)
+					zap.S().Warnf("Could not close volume %s due to error - %v", vol.ObjectName, err)
 				}
 				if err = vol.DeleteVolume(); err != nil {
-					log.AppLogger.Warningf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
+					zap.S().Warnf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
 				}
-				log.AppLogger.Debugf("Processed %s.", vol.ObjectName)
+				zap.S().Debugf("Processed %s.", vol.ObjectName)
 				vol = nil
 				<-buffer
 			case <-ctx.Done():
@@ -524,10 +522,10 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 	// Wait for the command to finish
 	err = group.Wait()
 	if err != nil {
-		log.AppLogger.Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
+		zap.S().Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
 		return err
 	}
-	log.AppLogger.Infof("zfs receive completed without error")
+	zap.S().Infof("zfs receive completed without error")
 
 	return nil
 }
@@ -538,19 +536,19 @@ func downloadTo(ctx context.Context, backend backends.Backend, objectName, toPat
 		defer r.Close()
 		out, oerr := os.Create(toPath)
 		if oerr != nil {
-			log.AppLogger.Errorf("Could not create file in the local cache dir due to error - %v.", oerr)
+			zap.S().Errorf("Could not create file in the local cache dir due to error - %v.", oerr)
 			return oerr
 		}
 		defer out.Close()
 
 		_, err := io.Copy(out, r)
 		if err != nil {
-			log.AppLogger.Errorf("Could not download file %s to the local cache dir due to error - %v.", objectName, err)
+			zap.S().Errorf("Could not download file %s to the local cache dir due to error - %v.", objectName, err)
 			return err
 		}
-		log.AppLogger.Debugf("Downloaded %s to local cache.", objectName)
+		zap.S().Debugf("Downloaded %s to local cache.", objectName)
 	} else {
-		log.AppLogger.Errorf("Could not download file %s to the local cache dir due to error - %v.", objectName, rerr)
+		zap.S().Errorf("Could not download file %s to the local cache dir due to error - %v.", objectName, rerr)
 		return rerr
 	}
 	return nil

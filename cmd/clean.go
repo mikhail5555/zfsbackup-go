@@ -56,9 +56,5 @@ func validateCleanFlags(cmd *cobra.Command, args []string) error {
 		return errInvalidInput
 	}
 
-	if err := loadReceiveKeys(); err != nil {
-		return err
-	}
-
 	return nil
 }

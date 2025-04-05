@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/backup"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 var (
@@ -46,18 +46,18 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if startsWith != "" {
 			if startsWith[len(startsWith)-1:] == "*" {
-				log.AppLogger.Infof("Listing all backup jobs for volumes starting with %s", startsWith)
+				zap.S().Infof("Listing all backup jobs for volumes starting with %s", startsWith)
 			} else {
-				log.AppLogger.Infof("Listing all backup jobs for volume %s", startsWith)
+				zap.S().Infof("Listing all backup jobs for volume %s", startsWith)
 			}
 		}
 
 		if !before.IsZero() {
-			log.AppLogger.Infof("Listing all back jobs of snapshots taken before %v", before)
+			zap.S().Infof("Listing all back jobs of snapshots taken before %v", before)
 		}
 
 		if !after.IsZero() {
-			log.AppLogger.Infof("Listing all back jobs of snapshots taken after %v", after)
+			zap.S().Infof("Listing all back jobs of snapshots taken after %v", after)
 		}
 
 		jobInfo.Destinations = []string{args[0]}
@@ -94,14 +94,10 @@ func validateListFlags(cmd *cobra.Command, args []string) error {
 		return errInvalidInput
 	}
 
-	if err := loadReceiveKeys(); err != nil {
-		return err
-	}
-
 	if beforeStr != "" {
 		parsed, perr := time.ParseInLocation(time.RFC3339[:19], beforeStr, time.Local)
 		if perr != nil {
-			log.AppLogger.Errorf("could not parse before time '%s' due to error: %v", beforeStr, perr)
+			zap.S().Errorf("could not parse before time '%s' due to error: %v", beforeStr, perr)
 			return perr
 		}
 		before = parsed
@@ -110,7 +106,7 @@ func validateListFlags(cmd *cobra.Command, args []string) error {
 	if afterStr != "" {
 		parsed, perr := time.ParseInLocation(time.RFC3339[:19], afterStr, time.Local)
 		if perr != nil {
-			log.AppLogger.Errorf("could not parse before time '%s' due to error: %v", beforeStr, perr)
+			zap.S().Errorf("could not parse before time '%s' due to error: %v", beforeStr, perr)
 			return perr
 		}
 		after = parsed

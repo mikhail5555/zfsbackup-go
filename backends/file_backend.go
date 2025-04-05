@@ -28,7 +28,7 @@ import (
 	"strings"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
+	"go.uber.org/zap"
 )
 
 // FileBackendPrefix is the URI prefix used for the FileBackend.
@@ -51,18 +51,18 @@ func (f *FileBackend) Init(ctx context.Context, conf *BackendConfig, opts ...Opt
 
 	absLocalPath, err := filepath.Abs(cleanPrefix)
 	if err != nil {
-		log.AppLogger.Errorf("file backend: Error while verifying path %s - %v", cleanPrefix, err)
+		zap.S().Errorf("file backend: Error while verifying path %s - %v", cleanPrefix, err)
 		return err
 	}
 
 	fi, err := os.Stat(absLocalPath)
 	if err != nil {
-		log.AppLogger.Errorf("file backend: Error while verifying path %s - %v", absLocalPath, err)
+		zap.S().Errorf("file backend: Error while verifying path %s - %v", absLocalPath, err)
 		return err
 	}
 
 	if !fi.IsDir() {
-		log.AppLogger.Errorf("file backend: Provided path is not a directory!")
+		zap.S().Errorf("file backend: Provided path is not a directory!")
 		return ErrInvalidURI
 	}
 
@@ -81,25 +81,25 @@ func (f *FileBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
 	destinationDir := filepath.Dir(destinationPath)
 
 	if err := os.MkdirAll(destinationDir, os.ModePerm); err != nil {
-		log.AppLogger.Debugf("file backend: Could not create path %s due to error - %v", destinationDir, err)
+		zap.S().Debugf("file backend: Could not create path %s due to error - %v", destinationDir, err)
 		return err
 	}
 
 	w, err := os.Create(destinationPath)
 	if err != nil {
-		log.AppLogger.Debugf("file backend: Could not create file %s due to error - %v", destinationPath, err)
+		zap.S().Debugf("file backend: Could not create file %s due to error - %v", destinationPath, err)
 		return err
 	}
 
 	_, err = io.Copy(w, vol)
 	if err != nil {
 		if closeErr := w.Close(); closeErr != nil {
-			log.AppLogger.Warningf("file backend: Error closing volume %s - %v", vol.ObjectName, closeErr)
+			zap.S().Warnf("file backend: Error closing volume %s - %v", vol.ObjectName, closeErr)
 		}
 		if deleteErr := os.Remove(destinationPath); deleteErr != nil {
-			log.AppLogger.Warningf("file backend: Error deleting failed upload file %s - %v", destinationPath, deleteErr)
+			zap.S().Warnf("file backend: Error deleting failed upload file %s - %v", destinationPath, deleteErr)
 		}
-		log.AppLogger.Debugf("file backend: Error while copying volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("file backend: Error while copying volume %s - %v", vol.ObjectName, err)
 		return err
 	}
 

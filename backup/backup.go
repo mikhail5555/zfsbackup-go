@@ -40,12 +40,12 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/miolini/datacounter"
 	"github.com/nightlyone/lockfile"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
@@ -63,10 +63,10 @@ func ProcessSmartOptions(ctx context.Context, jobInfo *files.JobInfo) error {
 	}
 	// Base Snapshots cannot be a bookmark
 	for i := range snapshots {
-		log.AppLogger.Debugf("Considering snapshot %s", snapshots[i].Name)
+		zap.S().Debugf("Considering snapshot %s", snapshots[i].Name)
 		if !snapshots[i].Bookmark {
 			if jobInfo.SnapshotPrefix == "" || strings.HasPrefix(snapshots[i].Name, jobInfo.SnapshotPrefix) {
-				log.AppLogger.Debugf("Matched snapshot: %s", snapshots[i].Name)
+				zap.S().Debugf("Matched snapshot: %s", snapshots[i].Name)
 				jobInfo.BaseSnapshot = snapshots[i]
 				break
 			}
@@ -129,13 +129,13 @@ func ProcessSmartOptions(ctx context.Context, jobInfo *files.JobInfo) error {
 	if jobInfo.FullIfOlderThan != -1*time.Minute {
 		if lastComparableSnapshots[0] == nil {
 			// No previous full backup, so do one
-			log.AppLogger.Infof("No previous full backup found, performing full backup.")
+			zap.S().Infof("No previous full backup found, performing full backup.")
 			return nil
 		}
 
 		if snapshots[0].CreationTime.Sub(lastComparableSnapshots[0].CreationTime) > jobInfo.FullIfOlderThan {
 			// Been more than the allotted time, do a full backup
-			log.AppLogger.Infof(
+			zap.S().Infof(
 				"Last Full backup was %v and is more than %v before the most recent snapshot, performing full backup.",
 				lastComparableSnapshots[0].CreationTime, jobInfo.FullIfOlderThan,
 			)
@@ -152,7 +152,7 @@ func ProcessSmartOptions(ctx context.Context, jobInfo *files.JobInfo) error {
 		if ok, verr := validateSnapShotExists(ctx, lastComparableSnapshots[0], jobInfo.VolumeName, true); verr != nil {
 			return verr
 		} else if !ok {
-			log.AppLogger.Infof(
+			zap.S().Infof(
 				"Last Full backup was done on %v but is no longer found in the local target, performing full backup.",
 				lastComparableSnapshots[0].CreationTime, jobInfo.FullIfOlderThan,
 			)
@@ -168,21 +168,21 @@ func getBackupsForTarget(ctx context.Context, volume, target string, jobInfo *fi
 	// Prepare the backend client
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
 	if berr != nil {
-		log.AppLogger.Errorf("Could not initialize backend due to error - %v.", berr)
+		zap.S().Errorf("Could not initialize backend due to error - %v.", berr)
 		return nil, berr
 	}
 
 	// Get the local cache dir
 	localCachePath, cerr := getCacheDir(target)
 	if cerr != nil {
-		log.AppLogger.Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
+		zap.S().Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
 		return nil, cerr
 	}
 
 	// Sync the local cache
 	safeManifests, _, serr := syncCache(ctx, jobInfo, localCachePath, backend)
 	if serr != nil {
-		log.AppLogger.Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
+		zap.S().Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
 		return nil, serr
 	}
 
@@ -222,13 +222,13 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 	lockFilePath := filepath.Join(os.TempDir(), fmt.Sprintf("zfsbackup.%x.lck", md5.Sum([]byte(jobInfo.VolumeName))))
 	lock, lferr := lockfile.New(lockFilePath)
 	if lferr != nil {
-		log.AppLogger.Errorf("Cannot init lock. reason: %v", lferr)
+		zap.S().Errorf("Cannot init lock. reason: %v", lferr)
 		return lferr
 	}
 	lferr = lock.TryLock()
 
 	if lferr != nil {
-		log.AppLogger.Errorf(
+		zap.S().Errorf(
 			"Cannot lock %q, reason: %v. If no other execution of %s is working on %s, you may forcefully remove the lock file located %s.",
 			lock, lferr, config.ProgramName, jobInfo.VolumeName, lockFilePath,
 		)
@@ -236,7 +236,7 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 	}
 	defer func() {
 		if err := lock.Unlock(); err != nil {
-			log.AppLogger.Warningf("Could not release lock %s: %v", lockFilePath, err)
+			zap.S().Warnf("Could not release lock %s: %v", lockFilePath, err)
 		}
 	}()
 
@@ -247,19 +247,19 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 
 	// Validate the snapshots we want to use exist
 	if ok, verr := validateSnapShotExists(ctx, &jobInfo.BaseSnapshot, jobInfo.VolumeName, false); verr != nil {
-		log.AppLogger.Errorf("Cannot validate if selected base snapshot exists due to error - %v", verr)
+		zap.S().Errorf("Cannot validate if selected base snapshot exists due to error - %v", verr)
 		return verr
 	} else if !ok {
-		log.AppLogger.Errorf("Selected base snapshot does not exist!")
+		zap.S().Errorf("Selected base snapshot does not exist!")
 		return fmt.Errorf("selected base snapshot does not exist")
 	}
 
 	if jobInfo.IncrementalSnapshot.Name != "" {
 		if ok, verr := validateSnapShotExists(ctx, &jobInfo.IncrementalSnapshot, jobInfo.VolumeName, true); verr != nil {
-			log.AppLogger.Errorf("Cannot validate if selected incremental snapshot exists due to error - %v", verr)
+			zap.S().Errorf("Cannot validate if selected incremental snapshot exists due to error - %v", verr)
 			return verr
 		} else if !ok {
-			log.AppLogger.Errorf("Selected incremental snapshot does not exist!")
+			zap.S().Errorf("Selected incremental snapshot does not exist!")
 			return fmt.Errorf("selected incremental snapshot does not exist")
 		}
 	}
@@ -322,12 +322,12 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 	for _, destination := range jobInfo.Destinations {
 		backend, berr := prepareBackend(ctx, jobInfo, destination, uploadBuffer)
 		if berr != nil {
-			log.AppLogger.Errorf("Could not initialize backend due to error - %v.", berr)
+			zap.S().Errorf("Could not initialize backend due to error - %v.", berr)
 			return berr
 		}
 		_, cerr := getCacheDir(destination)
 		if cerr != nil {
-			log.AppLogger.Errorf("Could not create cache for destination %s due to error - %v.", destination, cerr)
+			zap.S().Errorf("Could not create cache for destination %s due to error - %v.", destination, cerr)
 			return cerr
 		}
 		out, waitgroup := retryUploadChainer(ctx, channels[len(channels)-1], backend, jobInfo, destination)
@@ -347,8 +347,8 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 					return nil
 				}
 				if !vol.IsManifest {
-					log.AppLogger.Debugf("Volume %s has finished the entire pipeline.", vol.ObjectName)
-					log.AppLogger.Debugf("Adding %s to the manifest volume list.", vol.ObjectName)
+					zap.S().Debugf("Volume %s has finished the entire pipeline.", vol.ObjectName)
+					zap.S().Debugf("Adding %s to the manifest volume list.", vol.ObjectName)
 					manifestmutex.Lock()
 					jobInfo.Volumes = append(jobInfo.Volumes, vol)
 					manifestmutex.Unlock()
@@ -358,7 +358,7 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 						return err
 					}
 					if err = manifestVol.DeleteVolume(); err != nil {
-						log.AppLogger.Warningf("Error deleting temporary manifest file  - %v", err)
+						zap.S().Warnf("Error deleting temporary manifest file  - %v", err)
 					}
 					maniwg.Done()
 				} else {
@@ -382,7 +382,7 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 	group.Go(func() error {
 		// TODO: How to incorporate contexts in this go routine?
 		maniwg.Wait() // Wait until the ZFS send command has completed and all volumes have been uploaded to all backends.
-		log.AppLogger.Infof("All volumes dispatched in pipeline, finalizing manifest file.")
+		zap.S().Infof("All volumes dispatched in pipeline, finalizing manifest file.")
 		manifestmutex.Lock()
 		jobInfo.EndTime = time.Now()
 		manifestmutex.Unlock()
@@ -409,7 +409,7 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 			FilesUploaded    int
 		}{jobInfo.ZFSStreamBytes, totalWrittenBytes, time.Since(jobInfo.StartTime), len(jobInfo.Volumes) + 1}
 		if j, jerr := json.Marshal(doneOutput); jerr != nil {
-			log.AppLogger.Errorf("could not output json due to error - %v", jerr)
+			zap.S().Errorf("could not output json due to error - %v", jerr)
 		} else {
 			fmt.Fprintf(config.Stdout, "%s", string(j))
 		}
@@ -426,11 +426,11 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 		)
 	}
 
-	log.AppLogger.Debugf("Cleaning up resources...")
+	zap.S().Debugf("Cleaning up resources...")
 
 	for _, backend := range usedBackends {
 		if err = backend.Close(); err != nil {
-			log.AppLogger.Warningf("Could not properly close backend due to error - %v", err)
+			zap.S().Warnf("Could not properly close backend due to error - %v", err)
 		}
 	}
 
@@ -445,7 +445,7 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 	// Setup Manifest File
 	manifest, err := files.CreateManifestVolume(ctx, j)
 	if err != nil {
-		log.AppLogger.Errorf("Error trying to create manifest volume - %v", err)
+		zap.S().Errorf("Error trying to create manifest volume - %v", err)
 		return nil, err
 	}
 	// nolint:gosec // MD5 not used for cryptographic purposes here
@@ -454,11 +454,11 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 	jsonEnc := json.NewEncoder(manifest)
 	err = jsonEnc.Encode(j)
 	if err != nil {
-		log.AppLogger.Errorf("Could not JSON Encode job information due to error - %v", err)
+		zap.S().Errorf("Could not JSON Encode job information due to error - %v", err)
 		return nil, err
 	}
 	if err = manifest.Close(); err != nil {
-		log.AppLogger.Errorf("Could not close manifest volume due to error - %v", err)
+		zap.S().Errorf("Could not close manifest volume due to error - %v", err)
 		return nil, err
 	}
 	for _, destination := range j.Destinations {
@@ -469,10 +469,10 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 		safeFolder := fmt.Sprintf("%x", md5.Sum([]byte(destination)))
 		dest := filepath.Join(config.WorkingDir, "cache", safeFolder, safeManifestFile)
 		if err = manifest.CopyTo(dest); err != nil {
-			log.AppLogger.Warningf("Could not write manifest volume due to error - %v", err)
+			zap.S().Warnf("Could not write manifest volume due to error - %v", err)
 			return nil, err
 		}
-		log.AppLogger.Debugf("Copied manifest to local cache for destination %s.", destination)
+		zap.S().Debugf("Copied manifest to local cache for destination %s.", destination)
 	}
 	return manifest, nil
 }
@@ -503,25 +503,25 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 		for {
 			// Skip bytes if we are resuming
 			if skipBytes > 0 {
-				log.AppLogger.Debugf("Want to skip %d bytes.", skipBytes)
+				zap.S().Debugf("Want to skip %d bytes.", skipBytes)
 				written, serr := io.CopyN(ioutil.Discard, counter, int64(skipBytes))
 				if serr != nil && serr != io.EOF {
-					log.AppLogger.Errorf("Error while trying to read from the zfs stream to skip %d bytes - %v", skipBytes, serr)
+					zap.S().Errorf("Error while trying to read from the zfs stream to skip %d bytes - %v", skipBytes, serr)
 					return serr
 				}
 				skipBytes -= uint64(written)
-				log.AppLogger.Debugf("Skipped %d bytes of the ZFS send stream.", written)
+				zap.S().Debugf("Skipped %d bytes of the ZFS send stream.", written)
 				continue
 			}
 
 			// Setup next Volume
 			if volume == nil || volume.Counter() >= (j.VolumeSize*humanize.MiByte)-50*humanize.KiByte {
 				if volume != nil {
-					log.AppLogger.Debugf("Finished creating volume %s", volume.ObjectName)
+					zap.S().Debugf("Finished creating volume %s", volume.ObjectName)
 					volume.ZFSStreamBytes = counter.Count() - lastTotalBytes
 					lastTotalBytes = counter.Count()
 					if err = volume.Close(); err != nil {
-						log.AppLogger.Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
+						zap.S().Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
 						return err
 					}
 					if !usingPipe {
@@ -531,10 +531,10 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 				<-buffer
 				volume, err = files.CreateBackupVolume(ctx, j, volNum)
 				if err != nil {
-					log.AppLogger.Errorf("Error while creating volume %d - %v", volNum, err)
+					zap.S().Errorf("Error while creating volume %d - %v", volNum, err)
 					return err
 				}
-				log.AppLogger.Debugf("Starting volume %s", volume.ObjectName)
+				zap.S().Debugf("Starting volume %s", volume.ObjectName)
 				volNum++
 				if usingPipe {
 					c <- volume
@@ -545,10 +545,10 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 			_, ierr := io.CopyN(volume, counter, files.BufferSize*2)
 			if ierr == io.EOF {
 				// We are done!
-				log.AppLogger.Debugf("Finished creating volume %s", volume.ObjectName)
+				zap.S().Debugf("Finished creating volume %s", volume.ObjectName)
 				volume.ZFSStreamBytes = counter.Count() - lastTotalBytes
 				if err = volume.Close(); err != nil {
-					log.AppLogger.Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
+					zap.S().Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
 					return err
 				}
 				if !usingPipe {
@@ -556,17 +556,17 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 				}
 				return nil
 			} else if ierr != nil {
-				log.AppLogger.Errorf("Error while trying to read from the zfs stream for volume %s - %v", volume.ObjectName, ierr)
+				zap.S().Errorf("Error while trying to read from the zfs stream for volume %s - %v", volume.ObjectName, ierr)
 				return ierr
 			}
 		}
 	})
 
 	// Start the zfs send command
-	log.AppLogger.Infof("Starting zfs send command: %s", strings.Join(cmd.Args, " "))
+	zap.S().Infof("Starting zfs send command: %s", strings.Join(cmd.Args, " "))
 	err := cmd.Start()
 	if err != nil {
-		log.AppLogger.Errorf("Error starting zfs command - %v", err)
+		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
 
@@ -579,12 +579,12 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			err = cmd.Process.Kill()
 			if err != nil {
-				log.AppLogger.Errorf("Could not kill zfs send command due to error - %v", err)
+				zap.S().Errorf("Could not kill zfs send command due to error - %v", err)
 				return
 			}
 			err = cmd.Process.Release()
 			if err != nil {
-				log.AppLogger.Errorf("Could not release resources from zfs send command due to error - %v", err)
+				zap.S().Errorf("Could not release resources from zfs send command due to error - %v", err)
 				return
 			}
 		}
@@ -597,10 +597,10 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 
 	err = group.Wait()
 	if err != nil {
-		log.AppLogger.Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
+		zap.S().Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
 		return err
 	}
-	log.AppLogger.Infof("zfs send completed without error")
+	zap.S().Infof("zfs send completed without error")
 	manifestmutex.Lock()
 	j.ZFSStreamBytes = counter.Count()
 	manifestmutex.Unlock()
@@ -611,15 +611,15 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 	// Temproary Final Manifest File
 	manifest, merr := files.CreateManifestVolume(ctx, j)
 	if merr != nil {
-		log.AppLogger.Errorf("Error trying to create manifest volume - %v", merr)
+		zap.S().Errorf("Error trying to create manifest volume - %v", merr)
 		return merr
 	}
 	defer func() {
 		if err := manifest.Close(); err != nil {
-			log.AppLogger.Warningf("Could not close the temporary manifest volume - %v", err)
+			zap.S().Warnf("Could not close the temporary manifest volume - %v", err)
 		}
 		if err := manifest.DeleteVolume(); err != nil {
-			log.AppLogger.Warningf("Could not delete the temporary manifest volume - %v", err)
+			zap.S().Warnf("Could not delete the temporary manifest volume - %v", err)
 		}
 	}()
 
@@ -632,31 +632,15 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 
 	switch originalManifest, oerr := readManifest(ctx, origManiPath, j); {
 	case os.IsNotExist(oerr):
-		log.AppLogger.Info("No previous manifest file exists, nothing to resume")
+		zap.S().Info("No previous manifest file exists, nothing to resume")
 	case oerr != nil:
-		log.AppLogger.Errorf("Could not open previous manifest file %s due to error: %v", origManiPath, oerr)
+		zap.S().Errorf("Could not open previous manifest file %s due to error: %v", origManiPath, oerr)
 		return oerr
 	default:
 		if originalManifest.Compressor != j.Compressor {
-			log.AppLogger.Errorf(
+			zap.S().Errorf(
 				"Cannot resume backup, original compressor %s != compressor specified %s",
 				originalManifest.Compressor, j.Compressor,
-			)
-			return fmt.Errorf("option mismatch")
-		}
-
-		if originalManifest.EncryptTo != j.EncryptTo {
-			log.AppLogger.Errorf(
-				"Cannot resume backup, different encryptTo flags specified (original %v != current %v)",
-				originalManifest.EncryptTo, j.EncryptTo,
-			)
-			return fmt.Errorf("option mismatch")
-		}
-
-		if originalManifest.SignFrom != j.SignFrom {
-			log.AppLogger.Errorf(
-				"Cannot resume backup, different signFrom flags specified (original %v != current %v)",
-				originalManifest.SignFrom, j.SignFrom,
 			)
 			return fmt.Errorf("option mismatch")
 		}
@@ -666,7 +650,7 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 		oldCMDLine := strings.Join(currentCMD.Args, " ")
 		currentCMDLine := strings.Join(oldCMD.Args, " ")
 		if strings.Compare(oldCMDLine, currentCMDLine) != 0 {
-			log.AppLogger.Errorf(
+			zap.S().Errorf(
 				"Cannot resume backup, different options given for zfs send command: `%s` != current `%s`",
 				oldCMDLine, currentCMDLine,
 			)
@@ -677,7 +661,7 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 		j.Volumes = originalManifest.Volumes
 		j.StartTime = originalManifest.StartTime
 		manifestmutex.Unlock()
-		log.AppLogger.Infof("Will be resuming previous backup attempt.")
+		zap.S().Infof("Will be resuming previous backup attempt.")
 	}
 	return nil
 }
@@ -709,7 +693,7 @@ func retryUploadChainer(
 				case <-ctx.Done():
 					return ctx.Err()
 				default:
-					log.AppLogger.Debugf("%s backend: Processing volume %s", prefix, vol.ObjectName)
+					zap.S().Debugf("%s backend: Processing volume %s", prefix, vol.ObjectName)
 					// Prepare the backoff retryer (forces the user configured retry options across all backends)
 					be := backoff.NewExponentialBackOff()
 					be.MaxInterval = j.MaxBackoffTime
@@ -718,10 +702,10 @@ func retryUploadChainer(
 
 					operation := volUploadWrapper(ctx, b, vol, prefix)
 					if err := backoff.Retry(operation, retryconf); err != nil {
-						log.AppLogger.Errorf("%s backend: Failed to upload volume %s due to error: %v", prefix, vol.ObjectName, err)
+						zap.S().Errorf("%s backend: Failed to upload volume %s due to error: %v", prefix, vol.ObjectName, err)
 						return err
 					}
-					log.AppLogger.Debugf("%s backend: Processed volume %s", prefix, vol.ObjectName)
+					zap.S().Debugf("%s backend: Processed volume %s", prefix, vol.ObjectName)
 					out <- vol
 				}
 			}
@@ -731,7 +715,7 @@ func retryUploadChainer(
 
 	gwg.Go(func() error {
 		wg.Wait()
-		log.AppLogger.Debugf("%s backend: closing out channel.", prefix)
+		zap.S().Debugf("%s backend: closing out channel.", prefix)
 		close(out)
 		return nil
 	})
@@ -742,14 +726,14 @@ func retryUploadChainer(
 func volUploadWrapper(ctx context.Context, b backends.Backend, vol *files.VolumeInfo, prefix string) func() error {
 	return func() error {
 		if err := vol.OpenVolume(); err != nil {
-			log.AppLogger.Debugf("%s: Error while opening volume %s - %v", prefix, vol.ObjectName, err)
+			zap.S().Debugf("%s: Error while opening volume %s - %v", prefix, vol.ObjectName, err)
 			return err
 		}
 		defer vol.Close()
 
 		err := b.Upload(ctx, vol)
 		if err != nil {
-			log.AppLogger.Debugf("%s: Error while uploading volume %s - %v", prefix, vol.ObjectName, err)
+			zap.S().Debugf("%s: Error while uploading volume %s - %v", prefix, vol.ObjectName, err)
 		}
 		return err
 	}

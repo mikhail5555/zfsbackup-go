@@ -30,10 +30,10 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 // Clean will remove files found in the desination that are not found in any of the manifests found locally or in the destination.
@@ -48,7 +48,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 	target := jobInfo.Destinations[0]
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
 	if berr != nil {
-		log.AppLogger.Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
+		zap.S().Errorf("Could not initialize backend for target %s due to error - %v.", target, berr)
 		return berr
 	}
 	defer backend.Close()
@@ -56,14 +56,14 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 	// Get the local cache dir
 	localCachePath, cerr := getCacheDir(target)
 	if cerr != nil {
-		log.AppLogger.Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
+		zap.S().Errorf("Could not get cache dir for target %s due to error - %v.", target, cerr)
 		return cerr
 	}
 
 	// Sync the local cache
 	safeManifests, localOnlyFiles, serr := syncCache(ctx, jobInfo, localCachePath, backend)
 	if serr != nil {
-		log.AppLogger.Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
+		zap.S().Errorf("Could not sync cache dir for target %s due to error - %v.", target, serr)
 		return serr
 	}
 
@@ -73,7 +73,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 		manifestPath := filepath.Join(localCachePath, manifest)
 		decodedManifest, oerr := readManifest(ctx, manifestPath, jobInfo)
 		if oerr != nil {
-			log.AppLogger.Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
+			zap.S().Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
 			return oerr
 		}
 		decodedManifests = append(decodedManifests, decodedManifest)
@@ -82,7 +82,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 	if !cleanLocal {
 		if len(localOnlyFiles) > 0 {
 			// nolint:lll // Long log message
-			log.AppLogger.Noticef(
+			zap.S().Debugf(
 				"There are %d local manifests not found in the destination, use --cleanLocal to delete these locally and any of their volumes found in the destination.",
 				len(localOnlyFiles),
 			)
@@ -90,7 +90,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 				manifestPath := filepath.Join(localCachePath, manifest)
 				decodedManifest, oerr := readManifest(ctx, manifestPath, jobInfo)
 				if oerr != nil {
-					log.AppLogger.Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
+					zap.S().Errorf("Could not read manifest %s due to error - %v", manifestPath, oerr)
 					return oerr
 				}
 				decodedManifests = append(decodedManifests, decodedManifest)
@@ -101,17 +101,17 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 			manifestPath := filepath.Join(localCachePath, manifest)
 			err := os.Remove(manifestPath)
 			if err != nil {
-				log.AppLogger.Errorf("Could not delete local manifest %s due to error - %v", manifestPath, err)
+				zap.S().Errorf("Could not delete local manifest %s due to error - %v", manifestPath, err)
 				return err
 			}
-			log.AppLogger.Debugf("Deleted %s.", manifestPath)
+			zap.S().Debugf("Deleted %s.", manifestPath)
 		}
 	}
 
 	// TODO: The following can be done in a much more efficient way (probably)
 	allObjects, err := backend.List(ctx, "")
 	if err != nil {
-		log.AppLogger.Errorf("Could not list objects in backend %s due to error - %v", target, err)
+		zap.S().Errorf("Could not list objects in backend %s due to error - %v", target, err)
 		return err
 	}
 
@@ -138,32 +138,31 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 			if !found {
 				// Broken backup set! inform the user!
 				if jobInfo.Force {
-					log.AppLogger.Warningf(
+					zap.S().Warnf(
 						"The following backup set is missing volume %s. Removing entire backupset:\n\n%s",
 						vol.ObjectName, manifest.String(),
 					)
 
 					// Compute the manifest object name and cache name to delete
 					manifest.ManifestPrefix = jobInfo.ManifestPrefix
-					manifest.SignKey = jobInfo.SignKey
-					manifest.EncryptKey = jobInfo.EncryptKey
+					manifest.AesEncryptionKey = jobInfo.AesEncryptionKey
 					tempManifest, terr := files.CreateManifestVolume(ctx, manifest)
 					if terr != nil {
-						log.AppLogger.Errorf("Could not compute manifest path due to error - %v.", terr)
+						zap.S().Errorf("Could not compute manifest path due to error - %v.", terr)
 						return terr
 					}
 					allObjects = append(allObjects, tempManifest.ObjectName)
 					if err = tempManifest.Close(); err != nil {
-						log.AppLogger.Warningf("Could not close temporary manifest %v", err)
+						zap.S().Warnf("Could not close temporary manifest %v", err)
 					}
 					if err = tempManifest.DeleteVolume(); err != nil {
-						log.AppLogger.Warningf("Could not delete temporary manifest %v", err)
+						zap.S().Warnf("Could not delete temporary manifest %v", err)
 					}
 					// nolint:gosec // MD5 not used for cryptographic purposes here
 					manifestPath := filepath.Join(localCachePath, fmt.Sprintf("%x", md5.Sum([]byte(tempManifest.ObjectName))))
 					err = os.Remove(manifestPath)
 					if err != nil {
-						log.AppLogger.Errorf("Could not delete local manifest %s due to error - %v. Continuing.", manifestPath, err)
+						zap.S().Errorf("Could not delete local manifest %s due to error - %v. Continuing.", manifestPath, err)
 					}
 
 					// Delete all volumes already processed in the manifest
@@ -172,7 +171,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 					}
 					break
 				} else {
-					log.AppLogger.Warningf(
+					zap.S().Warnf(
 						"The following backup set is missing volume %s:\n\n%s\n\nPass the --force flag to delete this backup set.",
 						vol.ObjectName, manifest.String(),
 					)
@@ -181,7 +180,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 		}
 	}
 
-	log.AppLogger.Noticef("Starting to delete %d objects in destination.", len(allObjects))
+	zap.S().Debugf("Starting to delete %d objects in destination.", len(allObjects))
 
 	// Whatever is left in allObjects was not found in any manifest, delete 'em
 	var group *errgroup.Group
@@ -215,23 +214,23 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 					}
 
 					if berr := backoff.Retry(operation, retryconf); berr != nil {
-						log.AppLogger.Errorf("Could not delete object %s in due to error - %v", objectPath, berr)
+						zap.S().Errorf("Could not delete object %s in due to error - %v", objectPath, berr)
 						return berr
 					}
 
-					log.AppLogger.Debugf("Deleted %s.", filepath.Join(target, objectPath))
+					zap.S().Debugf("Deleted %s.", filepath.Join(target, objectPath))
 				}
 			}
 		})
 	}
 
-	log.AppLogger.Debugf("Waiting to delete %d objects in destination.", len(allObjects))
+	zap.S().Debugf("Waiting to delete %d objects in destination.", len(allObjects))
 	err = group.Wait()
 	if err != nil {
-		log.AppLogger.Errorf("Could not finish clean operation due to error, aborting: %v", err)
+		zap.S().Errorf("Could not finish clean operation due to error, aborting: %v", err)
 		return err
 	}
 
-	log.AppLogger.Noticef("Done.")
+	zap.S().Debugf("Done.")
 	return nil
 }

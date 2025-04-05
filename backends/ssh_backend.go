@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/someone1/zfsbackup-go/files"
 )
 
 // SSHBackendPrefix is the URI prefix used for the SSHBackend.
@@ -84,7 +85,7 @@ func buildAuthMethods(userHomeDir string, password string) (sshAuths []ssh.AuthM
 			signer, err := buildSshSigner(keyPath, password)
 			if err != nil {
 				if !errors.Is(err, os.ErrNotExist) {
-					log.AppLogger.Warningf("ssh backend: Failed to use ssh key at %s - %v", keyPath, err)
+					zap.S().Warnf("ssh backend: Failed to use ssh key at %s - %v", keyPath, err)
 				}
 				continue
 			}
@@ -128,13 +129,13 @@ func (s *SSHBackend) Init(ctx context.Context, conf *BackendConfig, opts ...Opti
 
 	targetUrl, err := url.Parse(s.conf.TargetURI)
 	if err != nil {
-		log.AppLogger.Errorf("ssh backend: Error while parsing target uri %s - %v", s.conf.TargetURI, err)
+		zap.S().Errorf("ssh backend: Error while parsing target uri %s - %v", s.conf.TargetURI, err)
 		return err
 	}
 
 	s.remotePath = strings.TrimSuffix(targetUrl.Path, "/")
 	if s.remotePath == "" && targetUrl.Path != "/" { // allow root path
-		log.AppLogger.Errorf("ssh backend: No remote path provided!")
+		zap.S().Errorf("ssh backend: No remote path provided!")
 		return ErrInvalidURI
 	}
 
@@ -192,12 +193,12 @@ func (s *SSHBackend) Init(ctx context.Context, conf *BackendConfig, opts ...Opti
 
 	fi, err := s.sftpClient.Stat(s.remotePath)
 	if err != nil {
-		log.AppLogger.Errorf("ssh backend: Error while verifying remote path %s - %v", s.remotePath, err)
+		zap.S().Errorf("ssh backend: Error while verifying remote path %s - %v", s.remotePath, err)
 		return err
 	}
 
 	if !fi.IsDir() {
-		log.AppLogger.Errorf("ssh backend: Provided remote path is not a directory!")
+		zap.S().Errorf("ssh backend: Provided remote path is not a directory!")
 		return ErrInvalidURI
 	}
 
@@ -215,25 +216,25 @@ func (s *SSHBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
 	destinationDir := filepath.Dir(destinationPath)
 
 	if err := s.sftpClient.MkdirAll(destinationDir); err != nil {
-		log.AppLogger.Debugf("ssh backend: Could not create path %s due to error - %v", destinationDir, err)
+		zap.S().Debugf("ssh backend: Could not create path %s due to error - %v", destinationDir, err)
 		return err
 	}
 
 	w, err := s.sftpClient.Create(destinationPath)
 	if err != nil {
-		log.AppLogger.Debugf("ssh backend: Could not create file %s due to error - %v", destinationPath, err)
+		zap.S().Debugf("ssh backend: Could not create file %s due to error - %v", destinationPath, err)
 		return err
 	}
 
 	_, err = io.Copy(w, vol)
 	if err != nil {
 		if closeErr := w.Close(); closeErr != nil {
-			log.AppLogger.Warningf("ssh backend: Error closing volume %s - %v", vol.ObjectName, closeErr)
+			zap.S().Warnf("ssh backend: Error closing volume %s - %v", vol.ObjectName, closeErr)
 		}
 		if deleteErr := os.Remove(destinationPath); deleteErr != nil {
-			log.AppLogger.Warningf("ssh backend: Error deleting failed upload file %s - %v", destinationPath, deleteErr)
+			zap.S().Warnf("ssh backend: Error deleting failed upload file %s - %v", destinationPath, deleteErr)
 		}
-		log.AppLogger.Debugf("ssh backend: Error while copying volume %s - %v", vol.ObjectName, err)
+		zap.S().Debugf("ssh backend: Error while copying volume %s - %v", vol.ObjectName, err)
 		return err
 	}
 

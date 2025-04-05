@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/config"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 var (
@@ -69,7 +69,7 @@ the runtime and architecture.`,
 				CompileTime: CompileTime,
 			})
 			if err != nil {
-				log.AppLogger.Errorf("could not dump version info to JSON - %v", err)
+				zap.S().Errorf("could not dump version info to JSON - %v", err)
 				return err
 			}
 			output = string(j)

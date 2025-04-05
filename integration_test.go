@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	oglog "log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -40,14 +39,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/op/go-logging"
 
 	"github.com/someone1/zfsbackup-go/backends"
 	"github.com/someone1/zfsbackup-go/backup"
 	"github.com/someone1/zfsbackup-go/cmd"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
-	"github.com/someone1/zfsbackup-go/log"
 )
 
 const (
@@ -262,9 +259,6 @@ func TestIntegration(t *testing.T) {
 	t.Run("Backup", func(t *testing.T) {
 		cmd.ResetSendJobInfo()
 
-		logBuf := bytes.NewBuffer(nil)
-		log.AppLogger.SetBackend(logging.MultiLogger(logging.NewLogBackend(logBuf, "", oglog.Ldate|oglog.Ltime)))
-
 		// Manual Full Backup
 		cmd.RootCmd.SetArgs([]string{"send", "--logLevel", logLevel, "--separator", "+", fmt.Sprintf("%s@a", dataset), bucket})
 		if err := cmd.RootCmd.ExecuteContext(ctx); err != nil {
@@ -338,9 +332,6 @@ func listWrapper(dataset, bucket string) func(*testing.T) {
 	return func(t *testing.T) {
 		ctx := context.Background()
 
-		logBuf := bytes.NewBuffer(nil)
-		log.AppLogger.SetBackend(logging.MultiLogger(logging.NewLogBackend(logBuf, "", oglog.Ldate|oglog.Ltime)))
-
 		old := config.Stdout
 		buf := bytes.NewBuffer(nil)
 		config.Stdout = buf
@@ -412,9 +403,6 @@ func listWrapper(dataset, bucket string) func(*testing.T) {
 func restoreWrapper(dataset, bucket, target string) func(*testing.T) {
 	return func(t *testing.T) {
 		ctx := context.Background()
-
-		logBuf := bytes.NewBuffer(nil)
-		log.AppLogger.SetBackend(logging.MultiLogger(logging.NewLogBackend(logBuf, "", oglog.Ldate|oglog.Ltime)))
 
 		scratchDir, sErr := ioutil.TempDir("", "")
 		if sErr != nil {
@@ -560,7 +548,26 @@ func TestEncryptionAndSign(t *testing.T) {
 		},
 		{
 			"Smart Restore success - Encrypted & Signed",
-			[]string{"receive", "--logLevel", logLevel, "--workingDirectory", scratchDir, "--publicKeyRingPath", "public.pgp", "--secretKeyRingPath", "private.pgp", "--encryptTo", user, "--signFrom", user, "-F", "--auto", dataset, target, newDataset},
+			[]string{
+				"receive",
+				"--logLevel",
+				logLevel,
+				"--workingDirectory",
+				scratchDir,
+				"--publicKeyRingPath",
+				"public.pgp",
+				"--secretKeyRingPath",
+				"private.pgp",
+				"--encryptTo",
+				user,
+				"--signFrom",
+				user,
+				"-F",
+				"--auto",
+				dataset,
+				target,
+				newDataset,
+			},
 			false,
 		},
 	}
@@ -576,12 +583,7 @@ func TestEncryptionAndSign(t *testing.T) {
 
 			cmd.RootCmd.SetArgs(tt.args)
 
-			buf := bytes.NewBuffer(nil)
-
-			log.AppLogger.SetBackend(logging.MultiLogger(logging.NewLogBackend(buf, "", oglog.Ldate|oglog.Ltime)))
-
 			if err := cmd.RootCmd.ExecuteContext(ctx); (err != nil) != tt.wantErr {
-				t.Logf("%s", buf.String())
 				t.Errorf("zfsbackup error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
