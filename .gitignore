@@ -16,3 +16,4 @@ zfsbackup*
 
 dist
 completions
+.env

@@ -22,6 +22,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -201,10 +202,10 @@ func validateReceiveFlags(cmd *cobra.Command, args []string) error {
 
 	for _, destination := range jobInfo.Destinations {
 		_, err := backends.GetBackendForURI(destination)
-		if err == backends.ErrInvalidPrefix {
+		if errors.Is(err, backends.ErrInvalidPrefix) {
 			zap.S().Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
 			return errInvalidInput
-		} else if err == backends.ErrInvalidURI {
+		} else if errors.Is(err, backends.ErrInvalidURI) {
 			zap.S().Errorf("Invalid destination URI, was given %s", destination)
 			return errInvalidInput
 		}
