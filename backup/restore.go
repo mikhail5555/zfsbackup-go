@@ -474,7 +474,7 @@ func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.Volume
 	})
 
 	// Start the zfs receive command
-	zap.S().Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
+	zap.S().Infof("Starting zfs receive command: %s", cmd.String())
 	if err := cmd.Run(); err != nil {
 		zap.S().Errorf("Error starting zfs command - %v: %s", err, buf.String())
 		return err
