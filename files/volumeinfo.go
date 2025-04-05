@@ -21,6 +21,7 @@
 package files
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
@@ -30,6 +31,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -73,12 +75,20 @@ type VolumeInfo struct {
 	IsFinalManifest bool
 
 	filename string
-	w        io.WriteCloser
-	r        io.ReadCloser
+	w        io.Writer
+	r        io.Reader
+	bufw     *bufio.Writer
 	fw       *os.File
 	// Pipe Objects
 	pw *io.PipeWriter
 	pr *io.PipeReader
+	// (de)compressor objects
+	cw  io.WriteCloser
+	rw  io.ReadCloser
+	cmd *exec.Cmd
+	// PGP objects
+	pgpw io.WriteCloser
+	pgpr *compencrypt.DecryptionReader
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -147,7 +157,7 @@ func (v *VolumeInfo) OpenVolume() error {
 	v.isClosed = false
 	v.isOpened = true
 	if config.BackupUploadBucket != nil {
-		v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
+		v.r = ratelimit.Reader(v.r, config.BackupUploadBucket)
 	}
 
 	return nil
@@ -175,7 +185,13 @@ func (v *VolumeInfo) Extract(j *JobInfo) error {
 		v.isOpened = true
 	}
 
-	v.r = compencrypt.NewDecryptAndDecompressReader(v.r, []byte(j.AesEncryptionKey))
+	if len(j.AesEncryptionKey) > 0 {
+		v.pgpr = compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
+		v.r = v.pgpr
+	}
+
+	v.rw = compencrypt.NewDecompressionReader(io.NopCloser(v.r))
+	v.r = v.rw
 
 	return nil
 }
@@ -212,6 +228,51 @@ func (v *VolumeInfo) Close() error {
 
 	if v.isOpened {
 		v.isOpened = false
+	}
+
+	// Close the (de)compressor, if any
+	if v.cw != nil || v.rw != nil {
+		if v.cw != nil {
+			if err := v.cw.Close(); err != nil {
+				return err
+			}
+			v.cw = nil
+		}
+
+		if v.rw != nil {
+			if err := v.rw.Close(); err != nil {
+				return err
+			}
+			v.rw = nil
+		}
+
+		// If we used an external (de)compressor, wait for it to close as well
+		if v.cmd != nil {
+			if err := v.cmd.Wait(); err != nil {
+				return err
+			}
+			v.cmd = nil
+		}
+	}
+
+	// Close the (de/en)crypter, if any
+	if v.pgpw != nil || v.pgpr != nil {
+		if v.pgpw != nil {
+			if err := v.pgpw.Close(); err != nil {
+				return err
+			}
+			v.pgpw = nil
+		}
+
+		if v.pgpr != nil {
+			v.pgpw = nil
+		}
+	}
+
+	// Flush the buffered writer
+	if v.bufw != nil {
+		v.bufw.Flush()
+		v.bufw = nil
 	}
 
 	// Finally, close the actual file or Pipe
@@ -264,19 +325,8 @@ func (v *VolumeInfo) Close() error {
 		v.SHA1 = nil
 	}
 
-	if v.w != nil {
-		if err := v.w.Close(); err != nil {
-			return err
-		}
-		v.w = nil
-	}
-
+	v.w = nil
 	if v.pr == nil {
-		if v.r != nil {
-			if err := v.r.Close(); err != nil {
-				return err
-			}
-		}
 		v.r = nil
 	}
 
@@ -310,7 +360,13 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, err
 		return nil, err
 	}
 
-	v.w = compencrypt.NewCompressAndEncryptWriter(v.w, []byte(j.AesEncryptionKey))
+	if len(j.AesEncryptionKey) > 0 {
+		v.pgpw = compencrypt.NewEncryptionWriter(compencrypt.NopWriteCloser(v.w), []byte(j.AesEncryptionKey))
+		v.w = v.pgpw
+	}
+
+	v.cw = compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(v.w))
+	v.w = v.cw
 
 	return v, nil
 }
@@ -370,7 +426,7 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 		v.isOpened = true
 		v.usingPipe = true
 		if config.BackupUploadBucket != nil {
-			v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
+			v.r = ratelimit.Reader(v.r, config.BackupUploadBucket)
 		}
 	} else {
 		tempFile, err := os.CreateTemp(config.BackupTempdir, config.ProgramName)
@@ -382,12 +438,16 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 		v.w = v.fw
 	}
 
+	// Buffer the writes to double the default block size (128KB)
+	v.bufw = bufio.NewWriterSize(v.w, BufferSize)
+	v.w = v.bufw
+
 	// Compute hashes
-	v.w = compencrypt.NopWriteCloser(io.MultiWriter(v.w, v.CRC32C, v.MD5, v.SHA1))
+	v.w = io.MultiWriter(v.w, v.SHA256, v.CRC32C, v.MD5, v.SHA1)
 
 	// Add a writer that counts how many bytes have been written
 	v.counter = datacounter.NewWriterCounter(v.w)
-	v.w = compencrypt.NopWriteCloser(v.counter)
+	v.w = v.counter
 
 	return v, nil
 }
