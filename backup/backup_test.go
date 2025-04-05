@@ -22,6 +22,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 
 	"github.com/someone1/zfsbackup-go/backends"
@@ -96,9 +98,7 @@ func TestBackup(t *testing.T) {
 
 	// Run the backup
 	err := Backup(t.Context(), jobInfo)
-	if err != nil {
-		t.Fatalf("Backup failed: %v", err)
-	}
+	assert.NoError(t, err)
 
 	// Verify results
 	if len(jobInfo.Volumes) == 0 {
@@ -115,10 +115,17 @@ func TestBackup(t *testing.T) {
 		t.Errorf("Expected end time to be after start time")
 	}
 
+	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.lz4.bin")
+	r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+	defer r.Close()
+
+	manifestContent, err := io.ReadAll(r)
+	assert.NoError(t, err)
+	var jobInfoFinished files.JobInfo
+	assert.NoError(t, json.Unmarshal(manifestContent, &jobInfoFinished))
+
 	uploadedFiles, _ := backends.MockBackendImpl.List(t.Context(), "")
-	if len(uploadedFiles) != 6 {
-		t.Errorf("Expected 6 files to be uploaded, got %d", len(uploadedFiles))
-	}
+	assert.Len(t, uploadedFiles, len(jobInfoFinished.Volumes)+1)
 
 	for _, fileName := range uploadedFiles {
 		file, _ := backends.MockBackendImpl.Download(t.Context(), fileName)
@@ -126,19 +133,9 @@ func TestBackup(t *testing.T) {
 		defer r.Close()
 
 		content, err := io.ReadAll(r)
-		if err != nil {
-			t.Errorf("failed to read %s: %v", fileName, err)
-		}
+		assert.NoError(t, err)
+
 		t.Logf("Read %s: %d", fileName, len(content))
-	}
-
-	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.gz.bin")
-	r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
-	defer r.Close()
-
-	manifestContent, err := io.ReadAll(r)
-	if err != nil {
-		t.Errorf("Could not read manifest: %v", err)
 	}
 
 	t.Logf("Manifest content: %s", string(manifestContent))

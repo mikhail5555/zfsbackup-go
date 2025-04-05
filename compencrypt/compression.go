@@ -12,9 +12,7 @@ type CompressionWriter struct {
 }
 
 func NewCompressionWriter(destination io.WriteCloser) *CompressionWriter {
-	return &CompressionWriter{
-		w: gzip.NewWriter(destination),
-	}
+	return &CompressionWriter{w: gzip.NewWriter(destination)}
 }
 
 func (cw *CompressionWriter) Write(p []byte) (int, error) {
@@ -28,16 +26,12 @@ func (cw *CompressionWriter) Close() error {
 var _ io.ReadCloser = (*DecompressionReader)(nil)
 
 type DecompressionReader struct {
-	source io.ReadCloser
-	r      *gzip.Reader
+	r *gzip.Reader
 }
 
 func NewDecompressionReader(source io.ReadCloser) *DecompressionReader {
-	decoder, _ := gzip.NewReader(source)
-	return &DecompressionReader{
-		source: source,
-		r:      decoder,
-	}
+	r, _ := gzip.NewReader(source)
+	return &DecompressionReader{r: r}
 }
 
 func (dr *DecompressionReader) Read(p []byte) (int, error) {
@@ -45,5 +39,5 @@ func (dr *DecompressionReader) Read(p []byte) (int, error) {
 }
 
 func (dr *DecompressionReader) Close() error {
-	return dr.source.Close()
+	return dr.r.Close()
 }
