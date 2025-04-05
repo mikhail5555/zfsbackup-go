@@ -115,7 +115,7 @@ func TestBackup(t *testing.T) {
 		t.Errorf("Expected end time to be after start time")
 	}
 
-	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.lz4.bin")
+	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.gz.bin")
 	r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
 	defer r.Close()
 
