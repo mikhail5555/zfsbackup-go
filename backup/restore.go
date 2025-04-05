@@ -447,7 +447,7 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 }
 
 func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, buffer <-chan interface{}) error {
-	buf := bytes.NewBuffer(nil)
+	buf := new(bytes.Buffer)
 	cin, cout := io.Pipe()
 	cmd.Stdin = cin
 	cmd.Stderr = buf

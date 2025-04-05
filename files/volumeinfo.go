@@ -383,7 +383,7 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 	}
 
 	// Compute hashes
-	v.w = compencrypt.NopWriteCloser(io.MultiWriter(v.w, v.SHA256, v.CRC32C, v.MD5, v.SHA1))
+	v.w = compencrypt.NopWriteCloser(io.MultiWriter(v.w, v.CRC32C, v.MD5, v.SHA1))
 
 	// Add a writer that counts how many bytes have been written
 	v.counter = datacounter.NewWriterCounter(v.w)

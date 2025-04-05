@@ -156,8 +156,8 @@ func copyDataset(t *testing.T, source, dest string) {
 	// nolint:gosec // The input is safe
 	sendCMD := exec.Command("zfs", "send", "-R", source)
 	receiveCMD := exec.Command("zfs", "receive", dest)
-	sendBuf := bytes.NewBuffer(nil)
-	recBuf := bytes.NewBuffer(nil)
+	sendBuf := new(bytes.Buffer)
+	recBuf := new(bytes.Buffer)
 	sendCMD.Stderr = sendBuf
 	receiveCMD.Stderr = recBuf
 

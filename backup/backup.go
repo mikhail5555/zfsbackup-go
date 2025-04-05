@@ -277,8 +277,7 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 		fileBuffer <- true
 	}
 
-	var group *errgroup.Group
-	group, ctx = errgroup.WithContext(ctx)
+	group, ctx := errgroup.WithContext(ctx)
 
 	// Used to prevent closing the upload pipeline after the ZFS command is done
 	// so we can send the manifest file up after all volumes have made it to the backends.
@@ -458,6 +457,9 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 	}
 
 	for _, destination := range j.Destinations {
+		if destination == backends.DeleteBackendPrefix+"://" {
+			continue
+		}
 		// nolint:gosec // MD5 not used for cryptographic purposes here
 		safeFolder := fmt.Sprintf("%x", md5.Sum([]byte(destination)))
 		dest := filepath.Join(config.WorkingDir, "cache", safeFolder, safeManifestFile)
@@ -472,10 +474,9 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 
 // nolint:funlen,gocyclo // Difficult to break this apart
 func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInfo, buffer <-chan bool) error {
-	var group *errgroup.Group
-	group, ctx = errgroup.WithContext(ctx)
+	group, ctx := errgroup.WithContext(ctx)
 
-	buf := bytes.NewBuffer(nil)
+	buf := new(bytes.Buffer)
 	cmd := zfs.GetZFSSendCommand(ctx, j)
 	cin, cout := io.Pipe()
 	cmd.Stdout = cout
@@ -557,8 +558,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 
 	// Start the zfs send command
 	zap.S().Infof("Starting zfs send command: %s", strings.Join(cmd.Args, " "))
-	err := cmd.Start()
-	if err != nil {
+	if err := cmd.Start(); err != nil {
 		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
@@ -570,13 +570,12 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 
 	defer func() {
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			err = cmd.Process.Kill()
-			if err != nil {
+			if err := cmd.Process.Kill(); err != nil {
 				zap.S().Errorf("Could not kill zfs send command due to error - %v", err)
 				return
 			}
-			err = cmd.Process.Release()
-			if err != nil {
+
+			if err := cmd.Process.Release(); err != nil {
 				zap.S().Errorf("Could not release resources from zfs send command due to error - %v", err)
 				return
 			}
@@ -588,8 +587,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 	manifestmutex.Unlock()
 	// Wait for the command to finish
 
-	err = group.Wait()
-	if err != nil {
+	if err := group.Wait(); err != nil {
 		zap.S().Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
 		return err
 	}
@@ -651,22 +649,11 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 	return nil
 }
 
-func retryUploadChainer(
-	ctx context.Context,
-	in <-chan *files.VolumeInfo,
-	b backends.Backend,
-	j *files.JobInfo,
-	dest string,
-) (<-chan *files.VolumeInfo, *errgroup.Group) {
+func retryUploadChainer(ctx context.Context, in <-chan *files.VolumeInfo, b backends.Backend, j *files.JobInfo, dest string) (<-chan *files.VolumeInfo, *errgroup.Group) {
 	out := make(chan *files.VolumeInfo)
 	parts := strings.Split(dest, "://")
 	prefix := parts[0]
-	var gwg *errgroup.Group
-	if j.MaxParallelUploads > 1 {
-		gwg, ctx = errgroup.WithContext(ctx)
-	} else {
-		gwg = new(errgroup.Group)
-	}
+	gwg, ctx := errgroup.WithContext(ctx)
 
 	var wg sync.WaitGroup
 	wg.Add(j.MaxParallelUploads)

@@ -21,16 +21,20 @@
 package backup
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/someone1/zfsbackup-go/backends"
+	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
+	"github.com/someone1/zfsbackup-go/zfs"
 )
 
 // Truly a useless backend
@@ -64,89 +68,79 @@ type errTestFunc func(error) bool
 
 func nilErrTest(e error) bool { return e == nil }
 
-func TestRetryUploadChainer(t *testing.T) {
-	_, goodVol, badVol, err := prepareTestVols()
-	if err != nil {
-		t.Fatalf("error preparing volumes for testing - %v", err)
+func fakeExecCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
+	cs := []string{"run", "./mock_zfs"}
+	cmd := exec.CommandContext(ctx, "go", cs...)
+	return cmd
+}
+
+func SetupMocks(info files.SnapshotInfo) func() {
+	l, _ := zap.NewDevelopment()
+	zap.ReplaceGlobals(l)
+
+	origExecCommand := zfs.GetZFSSendCommand
+	zfs.GetZFSSendCommand = fakeExecCommand
+
+	origsSnapshotCommand := zfs.GetSnapshotsAndBookmarks
+	zfs.GetSnapshotsAndBookmarks = func(_ context.Context, _ string) ([]files.SnapshotInfo, error) {
+		return []files.SnapshotInfo{info}, nil
 	}
 
-	testCases := []struct {
-		name  string
-		vol   *files.VolumeInfo
-		valid errTestFunc
-	}{
-		{
-			name:  "good",
-			vol:   goodVol,
-			valid: nilErrTest,
-		},
-		{
-			name:  "bad",
-			vol:   badVol,
-			valid: os.IsNotExist,
-		},
+	origGetCreationDate := zfs.GetCreationDate
+	zfs.GetCreationDate = func(ctx context.Context, target string) (time.Time, error) {
+		return info.CreationTime, nil
 	}
 
-	j := &files.JobInfo{
-		MaxParallelUploads: 1,
-		MaxBackoffTime:     5 * time.Millisecond,
-		MaxRetryTime:       1 * time.Second,
-	}
-
-	for idx, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			b := &mockBackend{}
-			if err := b.Init(t.Context(), nil); err != nil {
-				t.Errorf("%d: Expected error %v, got %v", idx, nil, err)
-				return
-			}
-
-			in := make(chan *files.VolumeInfo, 1)
-			out, wg := retryUploadChainer(t.Context(), in, b, j, "mock://")
-			in <- testCase.vol
-			close(in)
-			outVol := <-out
-			if errResult := wg.Wait(); !testCase.valid(errResult) {
-				t.Errorf("%d: error %v id not pass validation function", idx, errResult)
-			} else if errResult == nil {
-				// Verify we got the same vol we passed in!
-				if outVol != testCase.vol {
-					t.Errorf("did not get same volume passed in back out")
-				}
-			}
-		})
+	return func() {
+		zfs.GetZFSSendCommand = origExecCommand
+		zfs.GetSnapshotsAndBookmarks = origsSnapshotCommand
+		zfs.GetCreationDate = origGetCreationDate
 	}
 }
 
-func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err error) {
-	payload = make([]byte, 10*1024*1024)
-	if _, err = rand.Read(payload); err != nil {
-		return
-	}
-	reader := bytes.NewReader(payload)
-	goodVol, err = files.CreateSimpleVolume(context.Background(), false)
-	if err != nil {
-		return
-	}
-	_, err = io.Copy(goodVol, reader)
-	if err != nil {
-		return
-	}
-	err = goodVol.Close()
-	if err != nil {
-		return
+func TestBackup(t *testing.T) {
+	baseSnapshot := files.SnapshotInfo{Name: "tank/test@snap1", CreationTime: time.Now()}
+
+	undo := SetupMocks(baseSnapshot)
+	defer undo()
+
+	tempDir := os.TempDir()
+	defer os.RemoveAll(tempDir)
+
+	config.WorkingDir = tempDir
+
+	// Create a job info for testing
+	jobInfo := &files.JobInfo{
+		VolumeName:         "tank/test",
+		VolumeSize:         1, // 1 MiB
+		UploadChunkSize:    1,
+		Destinations:       []string{fmt.Sprintf("%s://test", backends.MockBackendPrefix)},
+		BaseSnapshot:       baseSnapshot,
+		MaxParallelUploads: 5,
+		MaxBackoffTime:     5 * time.Millisecond,
+		MaxRetryTime:       1 * time.Second,
+		StartTime:          time.Now(),
+		AesEncryptionKey:   "test1234test1234",
 	}
 
-	badVol, err = files.CreateSimpleVolume(context.Background(), false)
+	// Run the backup
+	err := Backup(t.Context(), jobInfo)
 	if err != nil {
-		return
-	}
-	err = badVol.Close()
-	if err != nil {
-		return
+		t.Fatalf("Backup failed: %v", err)
 	}
 
-	err = badVol.DeleteVolume()
+	// Verify results
+	if len(jobInfo.Volumes) == 0 {
+		t.Errorf("Expected at least one volume to be created")
+	}
 
-	return payload, goodVol, badVol, err
+	// Check that ZFS stream bytes were recorded
+	if jobInfo.ZFSStreamBytes == 0 {
+		t.Errorf("Expected ZFS stream bytes to be recorded")
+	}
+
+	// Verify that the manifest was created
+	if !jobInfo.EndTime.After(jobInfo.StartTime) {
+		t.Errorf("Expected end time to be after start time")
+	}
 }

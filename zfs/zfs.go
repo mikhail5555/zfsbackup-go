@@ -41,7 +41,9 @@ var (
 
 // GetCreationDate will use the zfs command to get and parse the creation datetime
 // of the specified volume/snapshot
-func GetCreationDate(ctx context.Context, target string) (time.Time, error) {
+var GetCreationDate = getCreationDate
+
+func getCreationDate(ctx context.Context, target string) (time.Time, error) {
 	rawTime, err := GetZFSProperty(ctx, "creation", target)
 	if err != nil {
 		return time.Time{}, err
@@ -54,7 +56,9 @@ func GetCreationDate(ctx context.Context, target string) (time.Time, error) {
 }
 
 // GetSnapshotsAndBookmarks will retrieve all snapshots and bookmarks for the given target
-func GetSnapshotsAndBookmarks(ctx context.Context, target string) ([]files.SnapshotInfo, error) {
+var GetSnapshotsAndBookmarks = getSnapshotsAndBookmarks
+
+func getSnapshotsAndBookmarks(ctx context.Context, target string) ([]files.SnapshotInfo, error) {
 	errB := new(bytes.Buffer)
 	cmd := exec.CommandContext(
 		ctx, ZFSPath, "list", "-H", "-d", "1", "-p", "-t", "snapshot,bookmark", "-r", "-o", "name,creation,type", "-S", "creation", target,
@@ -112,7 +116,9 @@ func GetZFSProperty(ctx context.Context, prop, target string) (string, error) {
 }
 
 // GetZFSSendCommand will return the send command to use for the given JobInfo
-func GetZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
+var GetZFSSendCommand = getZFSSendCommand
+
+func getZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 	// Prepare the zfs send command
 	zfsArgs := []string{"send"}
 

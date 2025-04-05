@@ -72,12 +72,22 @@ func GetBackendForURI(uri string) (Backend, error) {
 	}
 
 	switch prefix[0] {
+	case MockBackendPrefix:
+		return MockBackendImpl, nil
 	case DeleteBackendPrefix:
 		return &DeleteBackend{}, nil
+	case GoogleCloudStorageBackendPrefix:
+		return &GoogleCloudStorageBackend{}, nil
+	case AWSS3BackendPrefix:
+		return &AWSS3Backend{}, nil
 	case FileBackendPrefix:
 		return &FileBackend{}, nil
+	case AzureBackendPrefix:
+		return &AzureBackend{}, nil
 	case B2BackendPrefix:
 		return &B2Backend{}, nil
+	case SSHBackendPrefix:
+		return &SSHBackend{}, nil
 	default:
 		return nil, ErrInvalidPrefix
 	}
