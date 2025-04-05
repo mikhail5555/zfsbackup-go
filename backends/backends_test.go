@@ -41,11 +41,11 @@ var (
 type errTestFunc func(error) bool
 
 func nilErrTest(e error) bool           { return e == nil }
-func errTestErrTest(e error) bool       { return e == errTest }
-func errInvalidURIErrTest(e error) bool { return e == ErrInvalidURI }
+func errTestErrTest(e error) bool       { return errors.Is(e, errTest) }
+func errInvalidURIErrTest(e error) bool { return errors.Is(e, ErrInvalidURI) }
 func invalidByteErrTest(e error) bool {
-	_, ok := e.(hex.InvalidByteError)
-	return ok
+	var invalidByteError hex.InvalidByteError
+	return errors.As(e, &invalidByteError)
 }
 
 func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err error) {
@@ -85,12 +85,12 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 
 func TestGetBackendForURI(t *testing.T) {
 	_, err := GetBackendForURI("thiswon'texist://")
-	if err != ErrInvalidPrefix {
+	if !errors.Is(err, ErrInvalidPrefix) {
 		t.Errorf("Expecting err %v, got %v for non-existent prefix", ErrInvalidPrefix, err)
 	}
 
 	_, err = GetBackendForURI("thisisinvalid")
-	if err != ErrInvalidURI {
+	if !errors.Is(err, ErrInvalidURI) {
 		t.Errorf("Expecting err %v, got %v for invalid URI", ErrInvalidURI, err)
 	}
 }
@@ -116,7 +116,7 @@ func BackendTest(ctx context.Context, prefix, uri string, skipPrefix bool, b Bac
 				MaxParallelUploadBuffer: make(chan bool, 5),
 			}
 			err := b.Init(ctx, conf)
-			if err != ErrInvalidURI {
+			if !errors.Is(err, ErrInvalidURI) {
 				t.Fatalf("Expected Invalid URI error, got %v", err)
 			}
 

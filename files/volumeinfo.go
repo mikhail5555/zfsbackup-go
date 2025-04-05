@@ -31,7 +31,6 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -83,9 +82,8 @@ type VolumeInfo struct {
 	pw *io.PipeWriter
 	pr *io.PipeReader
 	// (de)compressor objects
-	cw  io.WriteCloser
-	rw  io.ReadCloser
-	cmd *exec.Cmd
+	cw io.WriteCloser
+	rw io.ReadCloser
 	// PGP objects
 	pgpw io.WriteCloser
 	pgpr *compencrypt.DecryptionReader
@@ -244,14 +242,6 @@ func (v *VolumeInfo) Close() error {
 				return err
 			}
 			v.rw = nil
-		}
-
-		// If we used an external (de)compressor, wait for it to close as well
-		if v.cmd != nil {
-			if err := v.cmd.Wait(); err != nil {
-				return err
-			}
-			v.cmd = nil
 		}
 	}
 
