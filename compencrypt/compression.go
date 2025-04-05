@@ -48,37 +48,22 @@ func (cw *CompressionWriter) Close() error {
 var _ io.ReadCloser = (*DecompressionReader)(nil)
 
 type DecompressionReader struct {
-	r      *zstd.Decoder
 	source io.ReadCloser
-	once   sync.Once
+	r      *zstd.Decoder
 }
 
 func NewDecompressionReader(source io.ReadCloser) *DecompressionReader {
+	decoder, _ := zstd.NewReader(source)
 	return &DecompressionReader{
 		source: source,
+		r:      decoder,
 	}
 }
 
 func (dr *DecompressionReader) Read(p []byte) (int, error) {
-	var onceErr error
-	dr.once.Do(func() {
-		decoder, err := zstd.NewReader(dr.source)
-		if err != nil {
-			onceErr = err
-			return
-		}
-		dr.r = decoder
-	})
-	if onceErr != nil {
-		return 0, onceErr
-	}
-
 	return dr.r.Read(p)
 }
 
 func (dr *DecompressionReader) Close() error {
-	if dr.r != nil {
-		dr.r.Close()
-	}
 	return dr.source.Close()
 }

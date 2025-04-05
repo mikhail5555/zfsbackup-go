@@ -21,7 +21,6 @@
 package files
 
 import (
-	"bufio"
 	"context"
 	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
@@ -76,7 +75,6 @@ type VolumeInfo struct {
 	filename string
 	w        io.WriteCloser
 	r        io.ReadCloser
-	bufw     *bufio.Writer
 	fw       *os.File
 	// Pipe Objects
 	pw *io.PipeWriter
@@ -214,12 +212,6 @@ func (v *VolumeInfo) Close() error {
 
 	if v.isOpened {
 		v.isOpened = false
-	}
-
-	// Flush the buffered writer
-	if v.bufw != nil {
-		_ = v.bufw.Flush()
-		v.bufw = nil
 	}
 
 	// Finally, close the actual file or Pipe
@@ -389,10 +381,6 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 		v.filename = tempFile.Name()
 		v.w = v.fw
 	}
-
-	// Buffer the writes to double the default block size (128KB)
-	v.bufw = bufio.NewWriterSize(v.w, BufferSize)
-	v.w = compencrypt.NopWriteCloser(v.bufw)
 
 	// Compute hashes
 	v.w = compencrypt.NopWriteCloser(io.MultiWriter(v.w, v.SHA256, v.CRC32C, v.MD5, v.SHA1))
