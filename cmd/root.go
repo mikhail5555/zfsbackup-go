@@ -79,7 +79,7 @@ func init() {
 		zapConfig.EncoderConfig.EncodeCaller = nil
 		zapConfig.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 
-		if logLevel, err := zap.ParseAtomicLevel(logLevel); err != nil {
+		if logLevel, err := zap.ParseAtomicLevel(logLevel); err == nil {
 			zapConfig.Level = logLevel
 		}
 
@@ -138,7 +138,7 @@ func init() {
 func resetRootFlags() {
 	jobInfo = files.JobInfo{}
 	numCores = 2
-	logLevel = "notice"
+	logLevel = "info"
 	workingDirectory = "~/.zfsbackup"
 	jobInfo.ManifestPrefix = "manifests"
 	zfs.ZFSPath = "zfs"
