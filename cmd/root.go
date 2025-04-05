@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/dustin/go-humanize"
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/juju/ratelimit"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
