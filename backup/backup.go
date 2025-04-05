@@ -342,7 +342,6 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 		for {
 			select {
 			case vol := <-lastChan:
-				vol.Close()
 				if !vol.IsManifest {
 					zap.S().Debugf("Volume %s has finished the entire pipeline.", vol.ObjectName)
 					zap.S().Debugf("Adding %s to the manifest volume list.", vol.ObjectName)
@@ -702,8 +701,6 @@ func retryUploadChainer(
 						return err
 					}
 					zap.S().Debugf("%s backend: Processed volume %s", prefix, vol.ObjectName)
-
-					vol.Close()
 
 					out <- vol
 				}
