@@ -22,7 +22,6 @@ package files
 
 import (
 	"bufio"
-	"context"
 	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
 	"crypto/sha256"
@@ -69,7 +68,6 @@ type VolumeInfo struct {
 	Size            uint64
 	ZFSStreamBytes  uint64
 	CreateTime      time.Time
-	CloseTime       time.Time
 	IsManifest      bool
 	IsFinalManifest bool
 
@@ -78,15 +76,11 @@ type VolumeInfo struct {
 	r        io.ReadCloser
 	bufw     *bufio.Writer
 	fw       *os.File
-	// Pipe Objects
-	pw *io.PipeWriter
-	pr *io.PipeReader
 	// Detail Objects
-	counter   *datacounter.WriterCounter
-	usingPipe bool
-	isClosed  bool
-	isOpened  bool
-	lock      sync.Mutex
+	counter *datacounter.WriterCounter
+	lock    sync.Mutex
+	pgpw    compencrypt.CompressAndEncryptWriter
+	cw      compencrypt.CompressAndEncryptWriter
 }
 
 // ByVolumeNumber is used to sort a VolumeInfo slice by VolumeNumber.
@@ -110,25 +104,14 @@ func (v *VolumeInfo) Read(p []byte) (int, error) {
 	return v.r.Read(p)
 }
 
-// IsUsingPipe will return true when the volume is a glorified pipe
-func (v *VolumeInfo) IsUsingPipe() bool {
-	return v.usingPipe
-}
-
 // Seek will passthru the command to the underlying *os.File
 func (v *VolumeInfo) Seek(offset int64, whence int) (int64, error) {
-	if v.usingPipe {
-		return 0, fmt.Errorf("cannot Seek on a piped reader")
-	}
-	return v.fw.Seek(offset, whence)
+	return 0, fmt.Errorf("cannot Seek on a piped reader")
 }
 
 // ReadAt will passthru the command to the underlying *os.File
 func (v *VolumeInfo) ReadAt(p []byte, off int64) (int, error) {
-	if v.usingPipe {
-		return 0, fmt.Errorf("cannot ReadAt on a piped reader")
-	}
-	return v.fw.ReadAt(p, off)
+	return 0, fmt.Errorf("cannot ReadAt on a piped reader")
 }
 
 // OpenVolume will open this VolumeInfo in a read-only mode. It will automatically
@@ -137,17 +120,12 @@ func (v *VolumeInfo) ReadAt(p []byte, off int64) (int, error) {
 // Only valid to be called after creating a new Volume and closing it or when
 // a MaxFileBuffer of 0 in which case this does nothing.
 func (v *VolumeInfo) OpenVolume() error {
-	if v.isOpened {
-		return nil
-	}
 	f, err := os.Open(v.filename)
 	if err != nil {
 		return err
 	}
 	v.fw = f
 	v.r = f
-	v.isClosed = false
-	v.isOpened = true
 	if config.BackupUploadBucket != nil {
 		v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
 	}
@@ -166,29 +144,9 @@ func ExtractLocal(j *JobInfo, path string) (*VolumeInfo, error) {
 // Extract will setup the volume for reading such that reading from it will handle any
 // decryption, signature verification, and decompression that was used on it.
 func (v *VolumeInfo) Extract(j *JobInfo) error {
-	if !v.usingPipe {
-		f, ferr := os.Open(v.filename)
-		if ferr != nil {
-			return ferr
-		}
-		v.fw = f
-		v.r = f
-		v.isClosed = false
-		v.isOpened = true
-	}
-
 	v.r = compencrypt.NewDecryptAndDecompressReader(v.r, []byte(j.AesEncryptionKey))
 
 	return nil
-}
-
-// DeleteVolume will delete the volume from the temporary directory it was written to.
-// Only valid to be called after creating a new Volume and closing it.
-func (v *VolumeInfo) DeleteVolume() error {
-	if v.usingPipe {
-		return nil // Nothing to delete
-	}
-	return os.Remove(v.filename)
 }
 
 // Write writes through to the underlying writer, satisfying the io.Writer interface.
@@ -203,19 +161,6 @@ func (v *VolumeInfo) Close() error {
 	v.lock.Lock()
 	defer v.lock.Unlock()
 
-	if v.isClosed {
-		return nil
-	}
-	v.isClosed = true
-
-	if !v.isOpened || v.pw != nil {
-		v.CloseTime = time.Now()
-	}
-
-	if v.isOpened {
-		v.isOpened = false
-	}
-
 	// Flush the buffered writer
 	if v.bufw != nil {
 		_ = v.bufw.Flush()
@@ -228,22 +173,6 @@ func (v *VolumeInfo) Close() error {
 			return err
 		}
 		v.fw = nil
-	}
-
-	if v.pw != nil {
-		// Special case for when we are using pipes, make the volume think its still
-		// open and needs to be closed by the reader.
-		v.isClosed = false
-		v.isOpened = true
-		if err := v.pw.Close(); err != nil {
-			return err
-		}
-		v.pw = nil
-	} else if v.pr != nil {
-		if err := v.pr.Close(); err != nil {
-			return err
-		}
-		v.pr = nil
 	}
 
 	// Record computed metrics and release resources
@@ -279,14 +208,12 @@ func (v *VolumeInfo) Close() error {
 		v.w = nil
 	}
 
-	if v.pr == nil {
-		if v.r != nil {
-			if err := v.r.Close(); err != nil {
-				return err
-			}
+	if v.r != nil {
+		if err := v.r.Close(); err != nil {
+			return err
 		}
-		v.r = nil
 	}
+	v.r = nil
 
 	return nil
 }
@@ -312,8 +239,8 @@ func (v *VolumeInfo) CopyTo(dest string) (err error) {
 
 // prepareVolume returns a VolumeInfo, filename parts, extension parts, and an error
 // compress -> encrypt/sign -> output
-func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, error) {
-	v, err := CreateSimpleVolume(ctx, pipe)
+func prepareVolume(j *JobInfo) (*VolumeInfo, error) {
+	v, err := CreateSimpleVolume()
 	if err != nil {
 		return nil, err
 	}
@@ -326,9 +253,9 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, err
 // CreateManifestVolume will call CreateSimpleVolume and add options to compress,
 // encrypt, and/or sign the file as it is written depending on the provided options.
 // It will also name the file accordingly as a manifest file.
-func CreateManifestVolume(ctx context.Context, j *JobInfo) (*VolumeInfo, error) {
+func CreateManifestVolume(j *JobInfo) (*VolumeInfo, error) {
 	// Create and name the manifest file
-	v, err := prepareVolume(ctx, j, false)
+	v, err := prepareVolume(j)
 	if err != nil {
 		return nil, err
 	}
@@ -342,13 +269,8 @@ func CreateManifestVolume(ctx context.Context, j *JobInfo) (*VolumeInfo, error) 
 // CreateBackupVolume will call CreateSimpleVolume and add options to compress,
 // encrypt, and/or sign the file as it is written depending on the provided options.
 // It will also name the file accordingly as a volume as part of backup set.
-func CreateBackupVolume(ctx context.Context, j *JobInfo, volnum int64) (*VolumeInfo, error) {
-	pipe := false
-	if j.MaxFileBuffer == 0 {
-		pipe = true
-	}
-
-	v, err := prepareVolume(ctx, j, pipe)
+func CreateBackupVolume(j *JobInfo, volnum int64) (*VolumeInfo, error) {
+	v, err := prepareVolume(j)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +284,7 @@ func CreateBackupVolume(ctx context.Context, j *JobInfo, volnum int64) (*VolumeI
 // CreateSimpleVolume will create a temporary file to write to. If
 // MaxParallelUploads is set to 0, no temporary file will be used and an OS Pipe
 // will be used instead.
-func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
+func CreateSimpleVolume() (*VolumeInfo, error) {
 	v := &VolumeInfo{
 		SHA256:     sha256.New(),
 		CRC32C:     crc32.New(crc32.MakeTable(crc32.Castagnoli)),
@@ -371,23 +293,11 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 		CreateTime: time.Now(),
 	}
 
-	if pipe {
-		v.pr, v.pw = io.Pipe()
-		v.r = v.pr
-		v.w = v.pw
-		v.isOpened = true
-		v.usingPipe = true
-		if config.BackupUploadBucket != nil {
-			v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
-		}
-	} else {
-		tempFile, err := os.CreateTemp(config.BackupTempdir, config.ProgramName)
-		if err != nil {
-			return nil, err
-		}
-		v.fw = tempFile
-		v.filename = tempFile.Name()
-		v.w = v.fw
+	pr, pw := io.Pipe()
+	v.r = pr
+	v.w = pw
+	if config.BackupUploadBucket != nil {
+		v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
 	}
 
 	// Buffer the writes to double the default block size (128KB)

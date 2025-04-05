@@ -390,7 +390,7 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		return rerr
 	}
 	defer r.Close()
-	vol, err := files.CreateSimpleVolume(ctx, usePipe)
+	vol, err := files.CreateSimpleVolume()
 	if err != nil {
 		zap.S().Debugf("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		return err
@@ -406,9 +406,6 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		zap.S().Debugf("Could not download file %s to the local cache dir due to error - %v.", sequence.volume.ObjectName, err)
 		if err = vol.Close(); err != nil {
 			zap.S().Warnf("Could not close volume %s due to error - %v", sequence.volume.ObjectName, err)
-		}
-		if err = vol.DeleteVolume(); err != nil {
-			zap.S().Warnf("Could not delete volume %s due to error - %v", sequence.volume.ObjectName, err)
 		}
 		if usePipe {
 			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
@@ -428,9 +425,6 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		)
 		if usePipe {
 			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
-		}
-		if err = vol.DeleteVolume(); err != nil {
-			zap.S().Debugf("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		}
 		return fmt.Errorf(
 			"SHA256 hash mismatch for %s, got %s but expected %s",
@@ -500,9 +494,6 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 				}
 				if err = vol.Close(); err != nil {
 					zap.S().Warnf("Could not close volume %s due to error - %v", vol.ObjectName, err)
-				}
-				if err = vol.DeleteVolume(); err != nil {
-					zap.S().Warnf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
 				}
 				zap.S().Debugf("Processed %s.", vol.ObjectName)
 				vol = nil

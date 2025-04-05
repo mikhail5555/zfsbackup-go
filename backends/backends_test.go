@@ -54,7 +54,7 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 		return
 	}
 	reader := bytes.NewReader(payload)
-	goodVol, err = files.CreateSimpleVolume(context.Background(), false)
+	goodVol, err = files.CreateSimpleVolume()
 	if err != nil {
 		return
 	}
@@ -68,7 +68,7 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 	}
 	goodVol.ObjectName = strings.Join([]string{"this", "is", "just", "a", "test"}, "-") + ".ext"
 
-	badVol, err = files.CreateSimpleVolume(context.Background(), false)
+	badVol, err = files.CreateSimpleVolume()
 	if err != nil {
 		return
 	}
@@ -77,8 +77,6 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 		return
 	}
 	badVol.ObjectName = strings.Join([]string{"this", "is", "just", "a", "badtest"}, "-") + ".ext"
-
-	err = badVol.DeleteVolume()
 
 	return payload, goodVol, badVol, err
 }
@@ -101,11 +99,6 @@ func BackendTest(ctx context.Context, prefix, uri string, skipPrefix bool, b Bac
 		if perr != nil {
 			t.Fatalf("Error while creating test volumes: %v", perr)
 		}
-		defer func() {
-			if err := goodVol.DeleteVolume(); err != nil {
-				t.Errorf("could not delete good vol - %v", err)
-			}
-		}()
 
 		t.Run("Init", func(t *testing.T) {
 			// Bad TargetURI

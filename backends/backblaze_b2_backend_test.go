@@ -39,10 +39,9 @@ func TestB2GetBackendForURI(t *testing.T) {
 }
 
 func TestB2Backend(t *testing.T) {
-	t.Parallel()
-
 	if os.Getenv("B2_ACCOUNT_ID") == "" {
 		t.Skip("No test B2 credentials provided to test against")
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

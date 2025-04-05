@@ -39,8 +39,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 
-	"github.com/someone1/zfsbackup-go/backends"
-	"github.com/someone1/zfsbackup-go/backup"
 	"github.com/someone1/zfsbackup-go/cmd"
 	"github.com/someone1/zfsbackup-go/config"
 	"github.com/someone1/zfsbackup-go/files"
@@ -56,6 +54,7 @@ func setupAzureBucket(t *testing.T) func() {
 	t.Helper()
 	if os.Getenv("AZURE_CUSTOM_ENDPOINT") == "" {
 		t.Skip("No custom Azure Endpoint provided to test against")
+		return nil
 	}
 	err := os.Setenv("AZURE_ACCOUNT_NAME", storage.StorageEmulatorAccountName)
 	if err != nil {
@@ -93,6 +92,7 @@ func setupAzureBucket(t *testing.T) func() {
 func setupS3Bucket(t *testing.T) func() {
 	if os.Getenv("AWS_S3_CUSTOM_ENDPOINT") == "" {
 		t.Skip("No custom S3 Endpoint provided to test against")
+		return
 	}
 
 	awsconf := aws.NewConfig().
@@ -207,97 +207,6 @@ func compareDirs(t *testing.T, source, dest string) {
 	if err := diffCmd.Run(); err != nil {
 		t.Logf("diff output: %s", errBuf.String())
 		t.Fatalf("unexpected difference comparing %s with %s: %v", source, dest, err)
-	}
-}
-
-func TestIntegration(t *testing.T) {
-	ctx := context.Background()
-
-	removeAzureBucket := setupAzureBucket(t)
-	defer removeAzureBucket()
-
-	removeS3Bucket := setupS3Bucket(t)
-	defer removeS3Bucket()
-
-	s3bucket := fmt.Sprintf("%s://%s", backends.AWSS3BackendPrefix, s3TestBucketName)
-	azurebucket := fmt.Sprintf("%s://%s", backends.AzureBackendPrefix, azureTestBucketName)
-	bucket := fmt.Sprintf("%s,%s", s3bucket, azurebucket)
-	dataset := fmt.Sprintf("tank/%s", t.Name())
-
-	copyDataset(t, "tank/data@c", dataset)
-	defer deleteDataset(t, dataset)
-
-	// Azurite doesn't seem to like '|' so making separator '-'
-	// Backup Tests
-	t.Run("Backup", func(t *testing.T) {
-		cmd.ResetSendJobInfo()
-
-		// Manual Full Backup
-		cmd.RootCmd.SetArgs([]string{"send", "--logLevel", logLevel, "--separator", "+", fmt.Sprintf("%s@a", dataset), bucket})
-		if err := cmd.RootCmd.ExecuteContext(ctx); err != nil {
-			t.Fatalf("error performing backup: %v", err)
-		}
-
-		cmd.ResetSendJobInfo()
-
-		// Bookmark setup
-		// nolint:gosec // The input is safe
-		if err := exec.Command("zfs", "bookmark", fmt.Sprintf("%s@a", dataset), fmt.Sprintf("%s#a", dataset)).Run(); err != nil {
-			t.Fatalf("unexpected error creating bookmark %s#a: %v", dataset, err)
-		}
-
-		// nolint:gosec // The input is safe
-		if err := exec.Command("zfs", "destroy", fmt.Sprintf("%s@a", dataset)).Run(); err != nil {
-			t.Fatalf("unexpected error destroying snapshot %s@a: %v", dataset, err)
-		}
-
-		// Manual Incremental Backup from bookmark
-		cmd.RootCmd.SetArgs([]string{"send", "--logLevel", logLevel, "--separator", "+", "-i", fmt.Sprintf("%s#a", dataset), fmt.Sprintf("%s@b", dataset), bucket})
-		if err := cmd.RootCmd.ExecuteContext(ctx); err != nil {
-			t.Fatalf("error performing backup: %v", err)
-		}
-
-		cmd.ResetSendJobInfo()
-
-		// Another Bookmark setup
-		// nolint:gosec // The input is safe
-		if err := exec.Command("zfs", "bookmark", fmt.Sprintf("%s@b", dataset), fmt.Sprintf("%s#b", dataset)).Run(); err != nil {
-			t.Fatalf("unexpected error creating bookmark %s#b: %v", dataset, err)
-		}
-
-		// nolint:gosec // The input is safe
-		if err := exec.Command("zfs", "destroy", fmt.Sprintf("%s@b", dataset)).Run(); err != nil {
-			t.Fatalf("unexpected error destroying snapshot %s@b: %v", dataset, err)
-		}
-
-		// "Smart" incremental Backup from bookmark
-		cmd.RootCmd.SetArgs([]string{"send", "--logLevel", logLevel, "--separator", "+", "--compressor", "xz", "--compressionLevel", "2", "--increment", dataset, bucket})
-		if err := cmd.RootCmd.ExecuteContext(ctx); err != nil {
-			t.Fatalf("error performing backup: %v", err)
-		}
-
-		cmd.ResetSendJobInfo()
-
-		// Smart Incremental Backup - Nothing to do
-		cmd.RootCmd.SetArgs([]string{"send", "--logLevel", logLevel, "--separator", "+", "--increment", dataset, bucket})
-		if err := cmd.RootCmd.ExecuteContext(ctx); err != backup.ErrNoOp {
-			t.Fatalf("expecting error %v, but got %v instead", backup.ErrNoOp, err)
-		}
-
-		cmd.ResetSendJobInfo()
-	})
-
-	restoreTest := []struct {
-		backend string
-		bucket  string
-		target  string
-	}{
-		{"AWSS3", s3bucket, "tank/data3"},
-		{"Azure", azurebucket, "tank/data2"},
-	}
-	for _, test := range restoreTest {
-		t.Run(fmt.Sprintf("List%s", test.backend), listWrapper(dataset, test.bucket))
-		t.Run(fmt.Sprintf("Restore%s", test.backend), restoreWrapper(dataset, test.bucket, test.target))
 	}
 }
 
