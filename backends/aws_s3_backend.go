@@ -47,6 +47,8 @@ import (
 	"github.com/someone1/zfsbackup-go/files"
 )
 
+var SleepFunc = time.Sleep
+
 // AWSS3BackendPrefix is the URI prefix used for the AWSS3Backend.
 const AWSS3BackendPrefix = "s3"
 
@@ -317,7 +319,7 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 				return err
 			}
 			if *resp.Restore == "ongoing-request=\"true\"" {
-				time.Sleep(time.Duration(backoffCount) * time.Minute)
+				SleepFunc(time.Duration(backoffCount) * time.Minute)
 				idx--
 				backoffCount++
 				if backoffCount > 10 {

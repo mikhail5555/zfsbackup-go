@@ -501,6 +501,7 @@ func receiveStream(cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, 
 		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
+
 	if err := cout.Close(); err != nil {
 		zap.S().Warnf("Could not close zfs send command due to error - %v: %s", err, buf.String())
 		return err

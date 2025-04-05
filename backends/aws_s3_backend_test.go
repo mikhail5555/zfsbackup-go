@@ -29,6 +29,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -471,6 +472,7 @@ func TestS3PreDownload(t *testing.T) {
 	for idx, c := range testCases {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
 			b := &AWSS3Backend{}
+			SleepFunc = func(d time.Duration) {}
 			if err := b.Init(t.Context(), c.conf, getOptions()...); err != nil {
 				t.Errorf("%d: Did not get expected nil error on Init, got %v instead", idx, err)
 			}
