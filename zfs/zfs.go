@@ -136,11 +136,6 @@ func GetZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 		zfsArgs = append(zfsArgs, "-p")
 	}
 
-	if j.Compressor == files.ZfsCompressor {
-		zap.S().Infof("Enabling the compression (-c) flag on the send.")
-		zfsArgs = append(zfsArgs, "-c")
-	}
-
 	if j.Raw {
 		zap.S().Infof("Enabling the raw (-w) flag on the send.")
 		zfsArgs = append(zfsArgs, "-w")

@@ -42,8 +42,6 @@ type JobInfo struct {
 	IncrementalSnapshot     SnapshotInfo
 	SnapshotPrefix          string
 	Raw                     bool
-	Compressor              string
-	CompressionLevel        int
 	Separator               string
 	ZFSCommandLine          string
 	ZFSStreamBytes          uint64
@@ -183,10 +181,6 @@ func (j *JobInfo) ValidateSendFlags() error {
 		return fmt.Errorf("The max backoff time must be set to a value greater than 0. Was given %d", j.MaxBackoffTime)
 	}
 
-	if j.CompressionLevel < 1 || j.CompressionLevel > 9 {
-		return fmt.Errorf("The compression level specified must be between 1 and 9. Was given %d", j.CompressionLevel)
-	}
-
 	if disallowedSeps.MatchString(j.Separator) {
 		return fmt.Errorf(
 			"The separator provided (%s) should not be used as it can conflict with allowed characters in zfs components",
@@ -205,7 +199,7 @@ func (j *JobInfo) ManifestObjectName() string {
 	extensions := []string{"manifest"}
 	nameParts := []string{j.ManifestPrefix}
 
-	baseParts, ext := j.volumeNameParts(true)
+	baseParts, ext := j.volumeNameParts()
 	extensions = append(extensions, ext...)
 	nameParts = append(nameParts, baseParts...)
 
@@ -215,31 +209,20 @@ func (j *JobInfo) ManifestObjectName() string {
 func (j *JobInfo) BackupVolumeObjectName(volumeNumber int64) string {
 	extensions := []string{"zstream"}
 
-	nameParts, ext := j.volumeNameParts(false)
+	nameParts, ext := j.volumeNameParts()
 	extensions = append(extensions, ext...)
 	extensions = append(extensions, fmt.Sprintf("vol%d", volumeNumber))
 
 	return fmt.Sprintf("%s.%s", strings.Join(nameParts, j.Separator), strings.Join(extensions, "."))
 }
 
-func (j *JobInfo) volumeNameParts(isManifest bool) (nameParts, extensions []string) {
-	extensions = make([]string, 0, 2)
+func (j *JobInfo) volumeNameParts() (nameParts, extensions []string) {
+	extensions = []string{
+		"zst",
+	}
 
 	if len(j.AesEncryptionKey) > 0 {
 		extensions = append(extensions, "bin")
-	}
-
-	compressorName := j.Compressor
-	if isManifest {
-		compressorName = InternalCompressor
-	}
-
-	switch compressorName {
-	case InternalCompressor:
-		extensions = append([]string{"gz"}, extensions...)
-	case "", ZfsCompressor:
-	default:
-		extensions = append([]string{compressorName}, extensions...)
 	}
 
 	nameParts = []string{j.VolumeName}

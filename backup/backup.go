@@ -637,14 +637,6 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 		zap.S().Errorf("Could not open previous manifest file %s due to error: %v", origManiPath, oerr)
 		return oerr
 	default:
-		if originalManifest.Compressor != j.Compressor {
-			zap.S().Errorf(
-				"Cannot resume backup, original compressor %s != compressor specified %s",
-				originalManifest.Compressor, j.Compressor,
-			)
-			return fmt.Errorf("option mismatch")
-		}
-
 		currentCMD := zfs.GetZFSSendCommand(ctx, j)
 		oldCMD := zfs.GetZFSSendCommand(ctx, originalManifest)
 		oldCMDLine := strings.Join(currentCMD.Args, " ")

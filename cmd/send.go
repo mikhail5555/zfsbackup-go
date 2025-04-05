@@ -22,6 +22,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -224,10 +225,10 @@ func updateJobInfo(args []string) error {
 
 	for _, destination := range jobInfo.Destinations {
 		_, err := backends.GetBackendForURI(destination)
-		if err == backends.ErrInvalidPrefix {
+		if errors.Is(err, backends.ErrInvalidPrefix) {
 			zap.S().Errorf("Unsupported prefix provided in destination URI, was given %s", destination)
 			return err
-		} else if err == backends.ErrInvalidURI {
+		} else if errors.Is(err, backends.ErrInvalidURI) {
 			zap.S().Errorf("Unsupported destination URI, was given %s", destination)
 			return err
 		}

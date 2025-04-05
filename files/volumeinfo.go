@@ -23,10 +23,7 @@ package files
 import (
 	"bufio"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5" // nolint:gosec // MD5 not used for cryptographic purposes here
-	"crypto/rand"
+	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
 	"crypto/sha256"
 	"fmt"
@@ -34,17 +31,14 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/juju/ratelimit"
-	"github.com/klauspost/compress/zstd"
 	"github.com/miolini/datacounter"
-	"go.uber.org/zap"
 
+	"github.com/someone1/zfsbackup-go/compencrypt"
 	"github.com/someone1/zfsbackup-go/config"
 )
 
@@ -80,20 +74,13 @@ type VolumeInfo struct {
 	IsFinalManifest bool
 
 	filename string
-	w        io.Writer
-	r        io.Reader
+	w        io.WriteCloser
+	r        io.ReadCloser
 	bufw     *bufio.Writer
 	fw       *os.File
 	// Pipe Objects
 	pw *io.PipeWriter
 	pr *io.PipeReader
-	// (de)compressor objects
-	cw  io.WriteCloser
-	rw  io.ReadCloser
-	cmd *exec.Cmd
-	// PGP objects
-	pgpw io.WriteCloser
-	pgpr *DecryptionReader
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -162,23 +149,23 @@ func (v *VolumeInfo) OpenVolume() error {
 	v.isClosed = false
 	v.isOpened = true
 	if config.BackupUploadBucket != nil {
-		v.r = ratelimit.Reader(v.r, config.BackupUploadBucket)
+		v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
 	}
 
 	return nil
 }
 
 // ExtractLocal will try and open a local file for extraction
-func ExtractLocal(ctx context.Context, j *JobInfo, path string, isManifest bool) (*VolumeInfo, error) {
+func ExtractLocal(j *JobInfo, path string) (*VolumeInfo, error) {
 	v := new(VolumeInfo)
 	v.filename = path
-	err := v.Extract(ctx, j, isManifest)
+	err := v.Extract(j)
 	return v, err
 }
 
 // Extract will setup the volume for reading such that reading from it will handle any
 // decryption, signature verification, and decompression that was used on it.
-func (v *VolumeInfo) Extract(ctx context.Context, j *JobInfo, isManifest bool) error {
+func (v *VolumeInfo) Extract(j *JobInfo) error {
 	if !v.usingPipe {
 		f, ferr := os.Open(v.filename)
 		if ferr != nil {
@@ -190,42 +177,8 @@ func (v *VolumeInfo) Extract(ctx context.Context, j *JobInfo, isManifest bool) e
 		v.isOpened = true
 	}
 
-	if len(j.AesEncryptionKey) > 0 {
-		v.pgpr = NewDecryptionReader(v.r, []byte(j.AesEncryptionKey))
-		v.r = v.pgpr
-	}
+	v.r = compencrypt.NewDecryptAndDecompressReader(v.r, []byte(j.AesEncryptionKey))
 
-	compressor := j.Compressor
-	if isManifest {
-		compressor = InternalCompressor
-	}
-
-	switch compressor {
-	case InternalCompressor:
-		ztsdReader, err := zstd.NewReader(v.r)
-		if err != nil {
-			return err
-		}
-		v.rw = ztsdReader.IOReadCloser()
-		v.r = v.rw
-	case "":
-	case ZfsCompressor:
-	default:
-		v.cmd = exec.CommandContext(ctx, compressor, "-c", "-d")
-		v.cmd.Stdin = v.r
-
-		decompressor, err := v.cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		v.rw = decompressor
-		v.r = v.rw
-		v.cmd.Stderr = os.Stderr
-
-		if err := v.cmd.Start(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -263,48 +216,9 @@ func (v *VolumeInfo) Close() error {
 		v.isOpened = false
 	}
 
-	// Close the (de)compressor, if any
-	if v.cw != nil || v.rw != nil {
-		if v.cw != nil {
-			if err := v.cw.Close(); err != nil {
-				return err
-			}
-			v.cw = nil
-		}
-
-		if v.rw != nil {
-			if err := v.rw.Close(); err != nil {
-				return err
-			}
-			v.rw = nil
-		}
-
-		// If we used an external (de)compressor, wait for it to close as well
-		if v.cmd != nil {
-			if err := v.cmd.Wait(); err != nil {
-				return err
-			}
-			v.cmd = nil
-		}
-	}
-
-	// Close the (de/en)crypter, if any
-	if v.pgpw != nil || v.pgpr != nil {
-		if v.pgpw != nil {
-			if err := v.pgpw.Close(); err != nil {
-				return err
-			}
-			v.pgpw = nil
-		}
-
-		if v.pgpr != nil {
-			v.pgpr = nil
-		}
-	}
-
 	// Flush the buffered writer
 	if v.bufw != nil {
-		v.bufw.Flush()
+		_ = v.bufw.Flush()
 		v.bufw = nil
 	}
 
@@ -387,80 +301,13 @@ func (v *VolumeInfo) CopyTo(dest string) (err error) {
 
 // prepareVolume returns a VolumeInfo, filename parts, extension parts, and an error
 // compress -> encrypt/sign -> output
-func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*VolumeInfo, error) {
+func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, error) {
 	v, err := CreateSimpleVolume(ctx, pipe)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(j.AesEncryptionKey) > 0 {
-		block, err := aes.NewCipher([]byte(j.AesEncryptionKey))
-		if err != nil {
-			return nil, err
-		}
-
-		iv := make([]byte, aes.BlockSize)
-		if _, err := rand.Read(iv); err != nil {
-			return nil, err
-		}
-
-		stream := cipher.NewCTR(block, iv)
-
-		// Write IV at the beginning
-		if _, err := v.w.Write(iv); err != nil {
-			return nil, err
-		}
-
-		writer := &cipher.StreamWriter{S: stream, W: v.w}
-
-		v.pgpw = writer
-		v.w = writer
-	}
-
-	compressorName := j.Compressor
-	if isManifest {
-		compressorName = InternalCompressor
-	}
-
-	// Prepare the compression writer, if any
-	switch compressorName {
-	case InternalCompressor:
-		v.cw, _ = zstd.NewWriter(v.w)
-		v.w = v.cw
-
-		printCompressCMD.Do(func() {
-			zap.S().Info("Will be using internal zstd compressor.")
-		})
-	case "":
-		printCompressCMD.Do(func() { zap.S().Infof("Will not be using any compression.") })
-	case ZfsCompressor:
-		printCompressCMD.Do(func() { zap.S().Infof("Will send a ZFS compressed stream") })
-	default:
-		v.cmd = exec.CommandContext(ctx, compressorName, "-c", fmt.Sprintf("-%d", j.CompressionLevel))
-		v.cmd.Stdout = v.w
-
-		compressor, err := v.cmd.StdinPipe()
-		if err != nil {
-			return nil, err
-		}
-		v.cw = compressor
-		v.w = v.cw
-		v.cmd.Stderr = os.Stderr
-
-		printCompressCMD.Do(func() {
-			zap.S().Infof(
-				"Will be using the external binary %s for compression with compression level %d. The executing command will be: %s",
-				j.Compressor, j.CompressionLevel, strings.Join(v.cmd.Args, " "),
-			)
-		})
-
-		err = v.cmd.Start()
-		if err != nil {
-			return nil, err
-		}
-
-		// TODO: Signal properly if the process closes prematurely
-	}
+	v.w = compencrypt.NewCompressAndEncryptWriter(v.w, []byte(j.AesEncryptionKey))
 
 	return v, nil
 }
@@ -470,7 +317,7 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*Vol
 // It will also name the file accordingly as a manifest file.
 func CreateManifestVolume(ctx context.Context, j *JobInfo) (*VolumeInfo, error) {
 	// Create and name the manifest file
-	v, err := prepareVolume(ctx, j, false, true)
+	v, err := prepareVolume(ctx, j, false)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +337,7 @@ func CreateBackupVolume(ctx context.Context, j *JobInfo, volnum int64) (*VolumeI
 		pipe = true
 	}
 
-	v, err := prepareVolume(ctx, j, pipe, false)
+	v, err := prepareVolume(ctx, j, pipe)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +367,7 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 		v.isOpened = true
 		v.usingPipe = true
 		if config.BackupUploadBucket != nil {
-			v.r = ratelimit.Reader(v.r, config.BackupUploadBucket)
+			v.r = io.NopCloser(ratelimit.Reader(v.r, config.BackupUploadBucket))
 		}
 	} else {
 		tempFile, err := os.CreateTemp(config.BackupTempdir, config.ProgramName)
@@ -534,53 +381,14 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 
 	// Buffer the writes to double the default block size (128KB)
 	v.bufw = bufio.NewWriterSize(v.w, BufferSize)
-	v.w = v.bufw
+	v.w = compencrypt.NopWriteCloser(v.bufw)
 
 	// Compute hashes
-	v.w = io.MultiWriter(v.w, v.SHA256, v.CRC32C, v.MD5, v.SHA1)
+	v.w = compencrypt.NopWriteCloser(io.MultiWriter(v.w, v.SHA256, v.CRC32C, v.MD5, v.SHA1))
 
 	// Add a writer that counts how many bytes have been written
 	v.counter = datacounter.NewWriterCounter(v.w)
-	v.w = v.counter
+	v.w = compencrypt.NopWriteCloser(v.counter)
 
 	return v, nil
-}
-
-type DecryptionReader struct {
-	r      *cipher.StreamReader
-	source io.Reader
-	key    []byte
-	once   sync.Once
-}
-
-func NewDecryptionReader(source io.Reader, key []byte) *DecryptionReader {
-	return &DecryptionReader{
-		source: source,
-		key:    key,
-	}
-}
-
-func (dr *DecryptionReader) Read(p []byte) (int, error) {
-	var onceErr error
-	dr.once.Do(func() {
-		block, err := aes.NewCipher(dr.key)
-		if err != nil {
-			onceErr = err
-			return
-		}
-
-		iv := make([]byte, aes.BlockSize)
-		if _, err := io.ReadFull(dr.source, iv); err != nil {
-			onceErr = err
-			return
-		}
-
-		stream := cipher.NewCTR(block, iv)
-		dr.r = &cipher.StreamReader{S: stream, R: dr.source}
-	})
-	if onceErr != nil {
-		return 0, onceErr
-	}
-
-	return dr.r.Read(p)
 }

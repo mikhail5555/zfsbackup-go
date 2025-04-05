@@ -455,16 +455,10 @@ func restoreWrapper(dataset, bucket, target string) func(*testing.T) {
 func TestEncryptionAndSign(t *testing.T) {
 	ctx := context.Background()
 
-	tempDir, err := ioutil.TempDir("", t.Name())
-	if err != nil {
-		t.Fatalf("error preparing temp dir for tests - %v", err)
-	}
+	tempDir := os.TempDir()
 	defer os.RemoveAll(tempDir) // clean up
 
-	scratchDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatalf("could not create temp scratch dir: %v", err)
-	}
+	scratchDir := os.TempDir()
 	defer os.RemoveAll(scratchDir)
 
 	var (

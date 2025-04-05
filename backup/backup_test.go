@@ -25,7 +25,6 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -43,7 +42,7 @@ func (m *mockBackend) Init(ctx context.Context, conf *backends.BackendConfig, op
 
 func (m *mockBackend) Upload(ctx context.Context, vol *files.VolumeInfo) error {
 	// make sure we can read the volume
-	_, err := ioutil.ReadAll(vol)
+	_, err := io.ReadAll(vol)
 	return err
 }
 
@@ -72,14 +71,17 @@ func TestRetryUploadChainer(t *testing.T) {
 	}
 
 	testCases := []struct {
+		name  string
 		vol   *files.VolumeInfo
 		valid errTestFunc
 	}{
 		{
+			name:  "good",
 			vol:   goodVol,
 			valid: nilErrTest,
 		},
 		{
+			name:  "bad",
 			vol:   badVol,
 			valid: os.IsNotExist,
 		},
@@ -87,17 +89,20 @@ func TestRetryUploadChainer(t *testing.T) {
 
 	j := &files.JobInfo{
 		MaxParallelUploads: 1,
-		MaxBackoffTime:     5 * time.Second,
-		MaxRetryTime:       1 * time.Minute,
+		MaxBackoffTime:     5 * time.Millisecond,
+		MaxRetryTime:       1 * time.Second,
 	}
 
 	for idx, testCase := range testCases {
-		b := &mockBackend{}
-		if err := b.Init(context.Background(), nil); err != nil {
-			t.Errorf("%d: Expected error %v, got %v", idx, nil, err)
-		} else {
+		t.Run(testCase.name, func(t *testing.T) {
+			b := &mockBackend{}
+			if err := b.Init(t.Context(), nil); err != nil {
+				t.Errorf("%d: Expected error %v, got %v", idx, nil, err)
+				return
+			}
+
 			in := make(chan *files.VolumeInfo, 1)
-			out, wg := retryUploadChainer(context.Background(), in, b, j, "mock://")
+			out, wg := retryUploadChainer(t.Context(), in, b, j, "mock://")
 			in <- testCase.vol
 			close(in)
 			outVol := <-out
@@ -109,7 +114,7 @@ func TestRetryUploadChainer(t *testing.T) {
 					t.Errorf("did not get same volume passed in back out")
 				}
 			}
-		}
+		})
 	}
 }
 

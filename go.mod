@@ -11,7 +11,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/joho/godotenv v1.5.1
 	github.com/juju/ratelimit v1.0.2
-	github.com/klauspost/pgzip v1.2.6
+	github.com/klauspost/compress v1.15.10
 	github.com/kurin/blazer v0.5.3
 	github.com/miolini/datacounter v1.0.3
 	github.com/nightlyone/lockfile v1.0.0
@@ -51,7 +51,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/klauspost/compress v1.15.10 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-ieproxy v0.0.9 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect

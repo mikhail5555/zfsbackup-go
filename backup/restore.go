@@ -175,7 +175,6 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 		jobInfo.BaseSnapshot = jobsToRestore[i].BaseSnapshot
 		jobInfo.IncrementalSnapshot = jobsToRestore[i].IncrementalSnapshot
 		jobInfo.Volumes = jobsToRestore[i].Volumes
-		jobInfo.Compressor = jobsToRestore[i].Compressor
 		jobInfo.Separator = jobsToRestore[i].Separator
 		zap.S().Infof("Restoring snapshot %s (%d/%d)", jobInfo.BaseSnapshot.Name, len(jobsToRestore)-i, len(jobsToRestore))
 		if err := Receive(ctx, jobInfo); err != nil {
@@ -489,7 +488,7 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 					return nil
 				}
 				zap.S().Debugf("Processing %s.", vol.ObjectName)
-				eerr := vol.Extract(ctx, j, false)
+				eerr := vol.Extract(j)
 				if eerr != nil {
 					zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
 					return err
