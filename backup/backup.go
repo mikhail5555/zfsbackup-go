@@ -449,8 +449,7 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 	safeManifestFile := fmt.Sprintf("%x", md5.Sum([]byte(manifest.ObjectName)))
 	manifest.IsFinalManifest = final
 	jsonEnc := json.NewEncoder(manifest)
-	err = jsonEnc.Encode(j)
-	if err != nil {
+	if err = jsonEnc.Encode(j); err != nil {
 		zap.S().Errorf("Could not JSON Encode job information due to error - %v", err)
 		return nil, err
 	}
@@ -458,6 +457,14 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 		zap.S().Errorf("Could not close manifest volume due to error - %v", err)
 		return nil, err
 	}
+
+	content, err := os.ReadFile(safeManifestFile)
+	if err != nil {
+		zap.S().Errorf("Could not read manifest file - %v", err)
+		return nil, err
+	}
+	zap.S().Infof("content of manifest file: %q", string(content))
+
 	for _, destination := range j.Destinations {
 		if destination == backends.DeleteBackendPrefix+"://" {
 			continue
