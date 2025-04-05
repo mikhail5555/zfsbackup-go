@@ -146,7 +146,7 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 					// Compute the manifest object name and cache name to delete
 					manifest.ManifestPrefix = jobInfo.ManifestPrefix
 					manifest.AesEncryptionKey = jobInfo.AesEncryptionKey
-					tempManifest, terr := files.CreateManifestVolume(manifest)
+					tempManifest, terr := files.CreateManifestVolume(ctx, manifest)
 					if terr != nil {
 						zap.S().Errorf("Could not compute manifest path due to error - %v.", terr)
 						return terr
@@ -155,7 +155,9 @@ func Clean(pctx context.Context, jobInfo *files.JobInfo, cleanLocal bool) error 
 					if err = tempManifest.Close(); err != nil {
 						zap.S().Warnf("Could not close temporary manifest %v", err)
 					}
-
+					if err = tempManifest.DeleteVolume(); err != nil {
+						zap.S().Warnf("Could not delete temporary manifest %v", err)
+					}
 					// nolint:gosec // MD5 not used for cryptographic purposes here
 					manifestPath := filepath.Join(localCachePath, fmt.Sprintf("%x", md5.Sum([]byte(tempManifest.ObjectName))))
 					err = os.Remove(manifestPath)

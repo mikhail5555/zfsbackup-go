@@ -92,7 +92,6 @@ func setupAzureBucket(t *testing.T) func() {
 func setupS3Bucket(t *testing.T) func() {
 	if os.Getenv("AWS_S3_CUSTOM_ENDPOINT") == "" {
 		t.Skip("No custom S3 Endpoint provided to test against")
-		return
 	}
 
 	awsconf := aws.NewConfig().

@@ -285,8 +285,16 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	}
 	toDownload = nil
 
+	// Prepare Download Pipeline
+	usePipe := false
+	fileBufferSize := jobInfo.MaxFileBuffer
+	if fileBufferSize == 0 {
+		fileBufferSize = 1
+		usePipe = true
+	}
+
 	downloadChannel := make(chan downloadSequence, len(manifest.Volumes))
-	bufferChannel := make(chan interface{}, 1)
+	bufferChannel := make(chan interface{}, fileBufferSize)
 	orderedChannels := make([]chan *files.VolumeInfo, len(manifest.Volumes))
 	defer close(bufferChannel)
 
@@ -301,44 +309,47 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	var wg *errgroup.Group
 	wg, ctx = errgroup.WithContext(ctx)
 
-	wg.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case sequence, ok := <-downloadChannel:
-				if !ok {
-					return nil
-				}
-				defer close(sequence.c)
+	// Kick off go routines to download
+	for i := 0; i < fileBufferSize; i++ {
+		wg.Go(func() error {
+			for {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case bufferChannel <- nil:
-				}
-
-				be := backoff.NewExponentialBackOff()
-				be.MaxInterval = jobInfo.MaxBackoffTime
-				be.MaxElapsedTime = jobInfo.MaxRetryTime
-				retryconf := backoff.WithContext(be, ctx)
-
-				operation := func() error {
-					oerr := processSequence(ctx, sequence, backend)
-					if oerr != nil {
-						zap.S().Warnf("error trying to download file %s - %v", sequence.volume.ObjectName, oerr)
+				case sequence, ok := <-downloadChannel:
+					if !ok {
+						return nil
 					}
-					return oerr
-				}
+					defer close(sequence.c)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case bufferChannel <- nil:
+					}
 
-				zap.S().Debugf("Downloading volume %s.", sequence.volume.ObjectName)
+					be := backoff.NewExponentialBackOff()
+					be.MaxInterval = jobInfo.MaxBackoffTime
+					be.MaxElapsedTime = jobInfo.MaxRetryTime
+					retryconf := backoff.WithContext(be, ctx)
 
-				if berr := backoff.Retry(operation, retryconf); berr != nil {
-					zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, berr)
-					return berr
+					operation := func() error {
+						oerr := processSequence(ctx, sequence, backend, usePipe)
+						if oerr != nil {
+							zap.S().Warnf("error trying to download file %s - %v", sequence.volume.ObjectName, oerr)
+						}
+						return oerr
+					}
+
+					zap.S().Debugf("Downloading volume %s.", sequence.volume.ObjectName)
+
+					if berr := backoff.Retry(operation, retryconf); berr != nil {
+						zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, berr)
+						return berr
+					}
 				}
 			}
-		}
-	})
+		})
+	}
 
 	// Order the downloaded Volumes
 	orderedVolumes := make(chan *files.VolumeInfo, len(toDownload))
@@ -372,21 +383,23 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	return nil
 }
 
-func processSequence(ctx context.Context, sequence downloadSequence, backend backends.Backend) error {
+func processSequence(ctx context.Context, sequence downloadSequence, backend backends.Backend, usePipe bool) error {
 	r, rerr := backend.Download(ctx, sequence.volume.ObjectName)
 	if rerr != nil {
 		zap.S().Infof("Could not get %s due to error %v.", sequence.volume.ObjectName, rerr)
 		return rerr
 	}
 	defer r.Close()
-	vol, err := files.CreateSimpleVolume()
+	vol, err := files.CreateSimpleVolume(ctx, usePipe)
 	if err != nil {
 		zap.S().Debugf("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		return err
 	}
 
 	vol.ObjectName = sequence.volume.ObjectName
-	sequence.c <- vol
+	if usePipe {
+		sequence.c <- vol
+	}
 
 	_, err = io.Copy(vol, r)
 	if err != nil {
@@ -394,7 +407,13 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		if err = vol.Close(); err != nil {
 			zap.S().Warnf("Could not close volume %s due to error - %v", sequence.volume.ObjectName, err)
 		}
-		return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
+		if err = vol.DeleteVolume(); err != nil {
+			zap.S().Warnf("Could not delete volume %s due to error - %v", sequence.volume.ObjectName, err)
+		}
+		if usePipe {
+			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
+		}
+		return err
 	}
 	if cerr := vol.Close(); cerr != nil {
 		zap.S().Debugf("Could not close temporary file to download %s due to error - %v.", sequence.volume.ObjectName, cerr)
@@ -407,9 +426,22 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 			"Hash mismatch for %s, got %s but expected %s. Retrying.",
 			sequence.volume.ObjectName, vol.SHA256Sum, sequence.volume.SHA256Sum,
 		)
-		return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
+		if usePipe {
+			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
+		}
+		if err = vol.DeleteVolume(); err != nil {
+			zap.S().Debugf("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
+		}
+		return fmt.Errorf(
+			"SHA256 hash mismatch for %s, got %s but expected %s",
+			sequence.volume.ObjectName, vol.SHA256Sum, sequence.volume.SHA256Sum,
+		)
 	}
 	zap.S().Debugf("Downloaded %s.", sequence.volume.ObjectName)
+
+	if !usePipe {
+		sequence.c <- vol
+	}
 
 	return nil
 }
@@ -468,6 +500,9 @@ func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-cha
 				}
 				if err = vol.Close(); err != nil {
 					zap.S().Warnf("Could not close volume %s due to error - %v", vol.ObjectName, err)
+				}
+				if err = vol.DeleteVolume(); err != nil {
+					zap.S().Warnf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
 				}
 				zap.S().Debugf("Processed %s.", vol.ObjectName)
 				vol = nil

@@ -313,6 +313,10 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 	var channels []<-chan *files.VolumeInfo
 	channels = append(channels, stepCh)
 
+	if jobInfo.MaxFileBuffer != 0 {
+		jobInfo.Destinations = append(jobInfo.Destinations, backends.DeleteBackendPrefix+"://")
+	}
+
 	// Prepare backends and setup plumbing
 	for _, destination := range jobInfo.Destinations {
 		backend, berr := prepareBackend(ctx, jobInfo, destination, uploadBuffer)
@@ -345,9 +349,12 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 					jobInfo.Volumes = append(jobInfo.Volumes, vol)
 					manifestmutex.Unlock()
 					// Write a manifest file and save it locally in order to resume later
-					_, err := saveManifest(ctx, jobInfo, false)
+					manifestVol, err := saveManifest(ctx, jobInfo, false)
 					if err != nil {
 						return err
+					}
+					if err = manifestVol.DeleteVolume(); err != nil {
+						zap.S().Warnf("Error deleting temporary manifest file  - %v", err)
 					}
 					maniwg.Done()
 				} else {
@@ -432,7 +439,7 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 	sort.Sort(files.ByVolumeNumber(j.Volumes))
 
 	// Setup Manifest File
-	manifest, err := files.CreateManifestVolume(j)
+	manifest, err := files.CreateManifestVolume(ctx, j)
 	if err != nil {
 		zap.S().Errorf("Error trying to create manifest volume - %v", err)
 		return nil, err
@@ -474,6 +481,10 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 	cmd.Stdout = cout
 	cmd.Stderr = buf
 	counter := datacounter.NewReaderCounter(cin)
+	usingPipe := false
+	if j.MaxFileBuffer == 0 {
+		usingPipe = true
+	}
 
 	group.Go(func() error {
 		var lastTotalBytes uint64
@@ -506,16 +517,21 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 						zap.S().Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
 						return err
 					}
+					if !usingPipe {
+						c <- volume
+					}
 				}
 				<-buffer
-				volume, err = files.CreateBackupVolume(j, volNum)
+				volume, err = files.CreateBackupVolume(ctx, j, volNum)
 				if err != nil {
 					zap.S().Errorf("Error while creating volume %d - %v", volNum, err)
 					return err
 				}
 				zap.S().Debugf("Starting volume %s", volume.ObjectName)
 				volNum++
-				c <- volume
+				if usingPipe {
+					c <- volume
+				}
 			}
 
 			// Write a little at a time and break the output between volumes as needed
@@ -527,6 +543,9 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 				if err = volume.Close(); err != nil {
 					zap.S().Errorf("Error while trying to close volume %s - %v", volume.ObjectName, err)
 					return err
+				}
+				if !usingPipe {
+					c <- volume
 				}
 				return nil
 			} else if ierr != nil {
@@ -583,7 +602,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 
 func tryResume(ctx context.Context, j *files.JobInfo) error {
 	// Temproary Final Manifest File
-	manifest, merr := files.CreateManifestVolume(j)
+	manifest, merr := files.CreateManifestVolume(ctx, j)
 	if merr != nil {
 		zap.S().Errorf("Error trying to create manifest volume - %v", merr)
 		return merr
@@ -591,6 +610,9 @@ func tryResume(ctx context.Context, j *files.JobInfo) error {
 	defer func() {
 		if err := manifest.Close(); err != nil {
 			zap.S().Warnf("Could not close the temporary manifest volume - %v", err)
+		}
+		if err := manifest.DeleteVolume(); err != nil {
+			zap.S().Warnf("Could not delete the temporary manifest volume - %v", err)
 		}
 	}()
 

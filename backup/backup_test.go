@@ -124,7 +124,7 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 		return
 	}
 	reader := bytes.NewReader(payload)
-	goodVol, err = files.CreateSimpleVolume()
+	goodVol, err = files.CreateSimpleVolume(context.Background(), false)
 	if err != nil {
 		return
 	}
@@ -137,7 +137,7 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 		return
 	}
 
-	badVol, err = files.CreateSimpleVolume()
+	badVol, err = files.CreateSimpleVolume(context.Background(), false)
 	if err != nil {
 		return
 	}
@@ -145,6 +145,8 @@ func prepareTestVols() (payload []byte, goodVol, badVol *files.VolumeInfo, err e
 	if err != nil {
 		return
 	}
+
+	err = badVol.DeleteVolume()
 
 	return payload, goodVol, badVol, err
 }
