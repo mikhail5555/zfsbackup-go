@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -166,7 +167,15 @@ func getZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 }
 
 // GetZFSReceiveCommand will return the recv command to use for the given JobInfo
-func GetZFSReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
+var GetZFSReceiveCommand = getZFSReceiveCommand
+
+func getZFSMockReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "wc")
+	cmd.Stdout = os.Stdout
+	return cmd
+}
+
+func getZFSReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 	// Prepare the zfs send command
 	zfsArgs := []string{"receive"}
 

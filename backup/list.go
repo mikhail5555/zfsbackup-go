@@ -220,9 +220,9 @@ func readManifest(ctx context.Context, manifestPath string, j *files.JobInfo) (*
 		return nil, err
 	}
 	defer manifestVol.Close()
+
 	decoder := json.NewDecoder(manifestVol)
-	err = decoder.Decode(decodedManifest)
-	if err != nil {
+	if err := decoder.Decode(decodedManifest); err != nil {
 		return nil, err
 	}
 

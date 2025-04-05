@@ -127,6 +127,7 @@ func TestBackup(t *testing.T) {
 	uploadedFiles, _ := backends.MockBackendImpl.List(t.Context(), "")
 	assert.Len(t, uploadedFiles, len(jobInfoFinished.Volumes)+1)
 
+	jobInfoFinished.ManifestObjectName()
 	for _, fileName := range uploadedFiles {
 		file, _ := backends.MockBackendImpl.Download(t.Context(), fileName)
 		r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))

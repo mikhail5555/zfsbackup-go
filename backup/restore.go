@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -189,8 +188,8 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 
 // Receive will download and restore the backup job described to the Volume target provided.
 // nolint:funlen,gocyclo // Difficult to break this up
-func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
-	ctx, cancel := context.WithCancel(pctx)
+func Receive(ctx context.Context, jobInfo *files.JobInfo) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	target := jobInfo.Destinations[0]
@@ -227,7 +226,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 			zap.S().Errorf("Cannot validate if selected base snapshot exists due to error - %v", verr)
 			return verr
 		} else if ok {
-			zap.S().Debugf("Selected base snapshot already exists, nothing to do!")
+			zap.S().Infof("Selected base snapshot already exists, nothing to do!")
 			return nil
 		}
 	}
@@ -269,6 +268,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	}
 
 	manifest.ManifestPrefix = jobInfo.ManifestPrefix
+	manifest.AesEncryptionKey = jobInfo.AesEncryptionKey
 
 	// Get list of Objects
 	toDownload := make([]string, len(manifest.Volumes))
@@ -292,18 +292,8 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 		usePipe = true
 	}
 
-	downloadChannel := make(chan downloadSequence, len(manifest.Volumes))
-	bufferChannel := make(chan interface{}, fileBufferSize)
+	downloadChannel := make(chan downloadSequence)
 	orderedChannels := make([]chan *files.VolumeInfo, len(manifest.Volumes))
-	defer close(bufferChannel)
-
-	// Queue up files to download
-	for idx := range manifest.Volumes {
-		c := make(chan *files.VolumeInfo, 1)
-		orderedChannels[idx] = c
-		downloadChannel <- downloadSequence{manifest.Volumes[idx], c}
-	}
-	close(downloadChannel)
 
 	var wg *errgroup.Group
 	wg, ctx = errgroup.WithContext(ctx)
@@ -311,42 +301,30 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Kick off go routines to download
 	for i := 0; i < fileBufferSize; i++ {
 		wg.Go(func() error {
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case sequence, ok := <-downloadChannel:
-					if !ok {
-						return nil
-					}
-					defer close(sequence.c)
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case bufferChannel <- nil:
-					}
+			for sequence := range downloadChannel {
+				defer close(sequence.c)
 
-					be := backoff.NewExponentialBackOff()
-					be.MaxInterval = jobInfo.MaxBackoffTime
-					be.MaxElapsedTime = jobInfo.MaxRetryTime
-					retryconf := backoff.WithContext(be, ctx)
+				be := backoff.NewExponentialBackOff()
+				be.MaxInterval = jobInfo.MaxBackoffTime
+				be.MaxElapsedTime = jobInfo.MaxRetryTime
+				retryconf := backoff.WithContext(be, ctx)
 
-					operation := func() error {
-						oerr := processSequence(ctx, sequence, backend, usePipe)
-						if oerr != nil {
-							zap.S().Warnf("error trying to download file %s - %v", sequence.volume.ObjectName, oerr)
-						}
-						return oerr
+				operation := func() error {
+					if err := processSequence(ctx, sequence, backend, usePipe); err != nil {
+						zap.S().Warnf("error trying to download file %s - %v", sequence.volume.ObjectName, err)
+						return err
 					}
+					return nil
+				}
 
-					zap.S().Debugf("Downloading volume %s.", sequence.volume.ObjectName)
+				zap.S().Debugf("Downloading volume %s.", sequence.volume.ObjectName)
 
-					if berr := backoff.Retry(operation, retryconf); berr != nil {
-						zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, berr)
-						return berr
-					}
+				if err := backoff.Retry(operation, retryconf); err != nil {
+					zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, err)
+					return err
 				}
 			}
+			return nil
 		})
 	}
 
@@ -366,19 +344,25 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	})
 
 	// Prepare ZFS Receive command
-	cmd := zfs.GetZFSReceiveCommand(ctx, jobInfo)
 	wg.Go(func() error {
-		return receiveStream(cmd, manifest, orderedVolumes, bufferChannel)
+		return receiveStream(ctx, manifest, orderedVolumes)
 	})
 
+	// Queue up files to download
+	for idx := range manifest.Volumes {
+		c := make(chan *files.VolumeInfo, 1)
+		orderedChannels[idx] = c
+		downloadChannel <- downloadSequence{manifest.Volumes[idx], c}
+	}
+	close(downloadChannel)
+
 	// Wait for processes to finish
-	err = wg.Wait()
-	if err != nil {
+	if err := wg.Wait(); err != nil {
 		zap.S().Errorf("There was an error during the restore process, aborting: %v", err)
 		return err
 	}
 
-	zap.S().Debugf("Done. Elapsed Time: %v", time.Since(jobInfo.StartTime))
+	zap.S().Infof("Done. Elapsed Time: %v", time.Since(jobInfo.StartTime))
 	return nil
 }
 
@@ -389,9 +373,12 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		return rerr
 	}
 	defer r.Close()
+
+	zap.S().Infof("download of %s succeeded.", sequence.volume.ObjectName)
+
 	vol, err := files.CreateSimpleVolume(ctx, usePipe)
 	if err != nil {
-		zap.S().Debugf("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
+		zap.S().Infof("Could not create temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		return err
 	}
 
@@ -402,7 +389,7 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 
 	_, err = io.Copy(vol, r)
 	if err != nil {
-		zap.S().Debugf("Could not download file %s to the local cache dir due to error - %v.", sequence.volume.ObjectName, err)
+		zap.S().Infof("Could not download file %s to the local cache dir due to error - %v.", sequence.volume.ObjectName, err)
 		if err = vol.Close(); err != nil {
 			zap.S().Warnf("Could not close volume %s due to error - %v", sequence.volume.ObjectName, err)
 		}
@@ -415,7 +402,7 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 		return err
 	}
 	if cerr := vol.Close(); cerr != nil {
-		zap.S().Debugf("Could not close temporary file to download %s due to error - %v.", sequence.volume.ObjectName, cerr)
+		zap.S().Infof("Could not close temporary file to download %s due to error - %v.", sequence.volume.ObjectName, cerr)
 		return cerr
 	}
 
@@ -429,7 +416,7 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 			return backoff.Permanent(fmt.Errorf("cannot retry when using no file buffer, aborting"))
 		}
 		if err = vol.DeleteVolume(); err != nil {
-			zap.S().Debugf("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
+			zap.S().Infof("Could not delete temporary file to download %s due to error - %v.", sequence.volume.ObjectName, err)
 		}
 		return fmt.Errorf(
 			"SHA256 hash mismatch for %s, got %s but expected %s",
@@ -445,8 +432,13 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 	return nil
 }
 
-func receiveStream(cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, buffer <-chan interface{}) error {
+func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.VolumeInfo) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	buf := new(bytes.Buffer)
+
+	cmd := zfs.GetZFSReceiveCommand(ctx, j)
 	cin, cout := io.Pipe()
 	cmd.Stdin = cin
 	cmd.Stderr = buf
@@ -454,6 +446,7 @@ func receiveStream(cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, 
 	// Extract ZFS stream from files and send it to the zfs command
 	var group errgroup.Group
 	group.Go(func() error {
+		defer cout.Close()
 		for vol := range c {
 			zap.S().Debugf("Processing %s.", vol.ObjectName)
 
@@ -476,34 +469,14 @@ func receiveStream(cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, 
 			}
 
 			zap.S().Debugf("Processed %s.", vol.ObjectName)
-
-			<-buffer
 		}
 		return nil
 	})
-
-	defer func() {
-		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			if err := cmd.Process.Kill(); err != nil {
-				zap.S().Errorf("Could not kill zfs send command due to error - %v", err)
-				return
-			}
-			if err := cmd.Process.Release(); err != nil {
-				zap.S().Errorf("Could not release resources from zfs send command due to error - %v", err)
-				return
-			}
-		}
-	}()
 
 	// Start the zfs receive command
 	zap.S().Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
 	if err := cmd.Run(); err != nil {
 		zap.S().Errorf("Error starting zfs command - %v", err)
-		return err
-	}
-
-	if err := cout.Close(); err != nil {
-		zap.S().Warnf("Could not close zfs send command due to error - %v: %s", err, buf.String())
 		return err
 	}
 

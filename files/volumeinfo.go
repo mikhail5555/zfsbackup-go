@@ -22,6 +22,7 @@ package files
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
@@ -184,11 +185,16 @@ func (v *VolumeInfo) Extract(j *JobInfo) error {
 	}
 
 	if len(j.AesEncryptionKey) > 0 {
-		v.pgpr = compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
-		v.r = v.pgpr
+		decryptionReader := compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
+		v.pgpr = decryptionReader
+		v.r = decryptionReader
 	}
 
-	v.rw = compencrypt.NewDecompressionReader(io.NopCloser(v.r))
+	var err error
+	v.rw, err = gzip.NewReader(v.r)
+	if err != nil {
+		return err
+	}
 	v.r = v.rw
 
 	return nil
@@ -355,7 +361,7 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, err
 		v.w = v.pgpw
 	}
 
-	v.cw = compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(v.w))
+	v.cw, _ = gzip.NewWriterLevel(v.w, 6)
 	v.w = v.cw
 
 	return v, nil

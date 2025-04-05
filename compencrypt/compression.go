@@ -3,6 +3,7 @@ package compencrypt
 import (
 	"compress/gzip"
 	"io"
+	"sync"
 )
 
 var _ io.WriteCloser = (*CompressionWriter)(nil)
@@ -26,18 +27,30 @@ func (cw *CompressionWriter) Close() error {
 var _ io.ReadCloser = (*DecompressionReader)(nil)
 
 type DecompressionReader struct {
-	r *gzip.Reader
+	r      *gzip.Reader
+	source io.ReadCloser
+	once   sync.Once
 }
 
 func NewDecompressionReader(source io.ReadCloser) *DecompressionReader {
-	r, _ := gzip.NewReader(source)
-	return &DecompressionReader{r: r}
+	return &DecompressionReader{source: source}
 }
 
 func (dr *DecompressionReader) Read(p []byte) (int, error) {
+	var onceErr error
+	dr.once.Do(func() {
+		dr.r, onceErr = gzip.NewReader(dr.source)
+	})
+	if onceErr != nil {
+		return 0, onceErr
+	}
+
 	return dr.r.Read(p)
 }
 
 func (dr *DecompressionReader) Close() error {
-	return dr.r.Close()
+	if dr.r != nil {
+		return dr.r.Close()
+	}
+	return dr.source.Close()
 }
