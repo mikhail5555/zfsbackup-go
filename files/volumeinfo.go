@@ -41,7 +41,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/juju/ratelimit"
-	gzip "github.com/klauspost/pgzip"
+	"github.com/klauspost/compress/zstd"
 	"github.com/miolini/datacounter"
 	"go.uber.org/zap"
 
@@ -93,7 +93,7 @@ type VolumeInfo struct {
 	cmd *exec.Cmd
 	// PGP objects
 	pgpw io.WriteCloser
-	pgpr *cipher.StreamReader
+	pgpr *DecryptionReader
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -191,24 +191,10 @@ func (v *VolumeInfo) Extract(ctx context.Context, j *JobInfo, isManifest bool) e
 	}
 
 	if len(j.AesEncryptionKey) > 0 {
-		block, err := aes.NewCipher([]byte(j.AesEncryptionKey))
-		if err != nil {
-			return err
-		}
-
-		iv := make([]byte, aes.BlockSize)
-		if _, err := io.ReadFull(v.r, iv); err != nil {
-			return err
-		}
-
-		stream := cipher.NewCTR(block, iv)
-		reader := &cipher.StreamReader{S: stream, R: v.r}
-
-		v.pgpr = reader
-		v.r = reader
+		v.pgpr = NewDecryptionReader(v.r, []byte(j.AesEncryptionKey))
+		v.r = v.pgpr
 	}
 
-	var err error
 	compressor := j.Compressor
 	if isManifest {
 		compressor = InternalCompressor
@@ -216,10 +202,11 @@ func (v *VolumeInfo) Extract(ctx context.Context, j *JobInfo, isManifest bool) e
 
 	switch compressor {
 	case InternalCompressor:
-		v.rw, err = gzip.NewReader(v.r)
+		ztsdReader, err := zstd.NewReader(v.r)
 		if err != nil {
 			return err
 		}
+		v.rw = ztsdReader.IOReadCloser()
 		v.r = v.rw
 	case "":
 	case ZfsCompressor:
@@ -311,7 +298,7 @@ func (v *VolumeInfo) Close() error {
 		}
 
 		if v.pgpr != nil {
-			v.pgpw = nil
+			v.pgpr = nil
 		}
 	}
 
@@ -438,11 +425,11 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe, isManifest bool) (*Vol
 	// Prepare the compression writer, if any
 	switch compressorName {
 	case InternalCompressor:
-		v.cw, _ = gzip.NewWriterLevel(v.w, j.CompressionLevel)
+		v.cw, _ = zstd.NewWriter(v.w)
 		v.w = v.cw
 
 		printCompressCMD.Do(func() {
-			zap.S().Infof("Will be using internal gzip compressor with compression level %d.", j.CompressionLevel)
+			zap.S().Info("Will be using internal zstd compressor.")
 		})
 	case "":
 		printCompressCMD.Do(func() { zap.S().Infof("Will not be using any compression.") })
@@ -557,4 +544,43 @@ func CreateSimpleVolume(ctx context.Context, pipe bool) (*VolumeInfo, error) {
 	v.w = v.counter
 
 	return v, nil
+}
+
+type DecryptionReader struct {
+	r      *cipher.StreamReader
+	source io.Reader
+	key    []byte
+	once   sync.Once
+}
+
+func NewDecryptionReader(source io.Reader, key []byte) *DecryptionReader {
+	return &DecryptionReader{
+		source: source,
+		key:    key,
+	}
+}
+
+func (dr *DecryptionReader) Read(p []byte) (int, error) {
+	var onceErr error
+	dr.once.Do(func() {
+		block, err := aes.NewCipher(dr.key)
+		if err != nil {
+			onceErr = err
+			return
+		}
+
+		iv := make([]byte, aes.BlockSize)
+		if _, err := io.ReadFull(dr.source, iv); err != nil {
+			onceErr = err
+			return
+		}
+
+		stream := cipher.NewCTR(block, iv)
+		dr.r = &cipher.StreamReader{S: stream, R: dr.source}
+	})
+	if onceErr != nil {
+		return 0, onceErr
+	}
+
+	return dr.r.Read(p)
 }

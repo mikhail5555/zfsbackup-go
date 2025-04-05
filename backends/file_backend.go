@@ -27,8 +27,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/someone1/zfsbackup-go/files"
 	"go.uber.org/zap"
+
+	"github.com/someone1/zfsbackup-go/files"
 )
 
 // FileBackendPrefix is the URI prefix used for the FileBackend.
