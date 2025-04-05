@@ -31,7 +31,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -369,7 +368,7 @@ func Receive(pctx context.Context, jobInfo *files.JobInfo) error {
 	// Prepare ZFS Receive command
 	cmd := zfs.GetZFSReceiveCommand(ctx, jobInfo)
 	wg.Go(func() error {
-		return receiveStream(ctx, cmd, manifest, orderedVolumes, bufferChannel)
+		return receiveStream(cmd, manifest, orderedVolumes, bufferChannel)
 	})
 
 	// Wait for processes to finish
@@ -446,84 +445,73 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 	return nil
 }
 
-func receiveStream(ctx context.Context, cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, buffer <-chan interface{}) error {
+func receiveStream(cmd *exec.Cmd, j *files.JobInfo, c <-chan *files.VolumeInfo, buffer <-chan interface{}) error {
 	buf := new(bytes.Buffer)
 	cin, cout := io.Pipe()
 	cmd.Stdin = cin
 	cmd.Stderr = buf
-	var group *errgroup.Group
-	var once sync.Once
-	group, ctx = errgroup.WithContext(ctx)
 
-	// Start the zfs receive command
-	zap.S().Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
-	err := cmd.Start()
-	if err != nil {
-		zap.S().Errorf("Error starting zfs command - %v", err)
-		return err
-	}
+	// Extract ZFS stream from files and send it to the zfs command
+	var group errgroup.Group
+	group.Go(func() error {
+		for vol := range c {
+			zap.S().Debugf("Processing %s.", vol.ObjectName)
+
+			if eerr := vol.Extract(j); eerr != nil {
+				zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
+				return eerr
+			}
+
+			if _, err := io.Copy(cout, vol); err != nil {
+				zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, err)
+				return err
+			}
+
+			if err := vol.Close(); err != nil {
+				zap.S().Warnf("Could not close volume %s due to error - %v", vol.ObjectName, err)
+			}
+
+			if err := vol.DeleteVolume(); err != nil {
+				zap.S().Warnf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
+			}
+
+			zap.S().Debugf("Processed %s.", vol.ObjectName)
+
+			<-buffer
+		}
+		return nil
+	})
 
 	defer func() {
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-			err = cmd.Process.Kill()
-			if err != nil {
+			if err := cmd.Process.Kill(); err != nil {
 				zap.S().Errorf("Could not kill zfs send command due to error - %v", err)
 				return
 			}
-			err = cmd.Process.Release()
-			if err != nil {
+			if err := cmd.Process.Release(); err != nil {
 				zap.S().Errorf("Could not release resources from zfs send command due to error - %v", err)
 				return
 			}
 		}
 	}()
 
-	// Extract ZFS stream from files and send it to the zfs command
-	group.Go(func() error {
-		defer once.Do(func() { cout.Close() })
-		for {
-			select {
-			case vol, ok := <-c:
-				if !ok {
-					return nil
-				}
-				zap.S().Debugf("Processing %s.", vol.ObjectName)
-				eerr := vol.Extract(j)
-				if eerr != nil {
-					zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
-					return err
-				}
-				_, eerr = io.Copy(cout, vol)
-				if eerr != nil {
-					zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
-					return eerr
-				}
-				if err = vol.Close(); err != nil {
-					zap.S().Warnf("Could not close volume %s due to error - %v", vol.ObjectName, err)
-				}
-				if err = vol.DeleteVolume(); err != nil {
-					zap.S().Warnf("Could not delete volume %s due to error - %v", vol.ObjectName, err)
-				}
-				zap.S().Debugf("Processed %s.", vol.ObjectName)
-				vol = nil
-				<-buffer
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	})
-
-	group.Go(func() error {
-		defer once.Do(func() { cout.Close() })
-		return cmd.Wait()
-	})
-
-	// Wait for the command to finish
-	err = group.Wait()
-	if err != nil {
-		zap.S().Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
+	// Start the zfs receive command
+	zap.S().Infof("Starting zfs receive command: %s", strings.Join(cmd.Args, " "))
+	if err := cmd.Run(); err != nil {
+		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
+	if err := cout.Close(); err != nil {
+		zap.S().Warnf("Could not close zfs send command due to error - %v: %s", err, buf.String())
+		return err
+	}
+
+	// Wait for the command to finish
+	if err := group.Wait(); err != nil {
+		zap.S().Errorf("Error waiting for zfs command to finish - %v", err)
+		return err
+	}
+
 	zap.S().Infof("zfs receive completed without error")
 
 	return nil

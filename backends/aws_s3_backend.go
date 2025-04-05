@@ -25,6 +25,7 @@ import (
 	"crypto/md5" //nolint:gosec // MD5 not used cryptographically here
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -291,7 +292,8 @@ func (a *AWSS3Backend) PreDownload(ctx context.Context, keys []string) error {
 				},
 			})
 			if rerr != nil {
-				if aerr, ok := rerr.(awserr.Error); ok && aerr.Code() != "RestoreAlreadyInProgress" {
+				var aerr awserr.Error
+				if errors.As(rerr, &aerr) && aerr.Code() != "RestoreAlreadyInProgress" {
 					zap.S().Debugf("s3 backend: error trying to restore key %s - %s: %s", key, aerr.Code(), aerr.Message())
 					return rerr
 				}
