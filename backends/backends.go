@@ -72,6 +72,8 @@ func GetBackendForURI(uri string) (Backend, error) {
 	}
 
 	switch prefix[0] {
+	case DeleteBackendPrefix:
+		return &DeleteBackend{}, nil
 	case FileBackendPrefix:
 		return &FileBackend{}, nil
 	case B2BackendPrefix:
