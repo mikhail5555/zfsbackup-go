@@ -81,12 +81,6 @@ func init() {
 		"the maximum size (in MiB) a volume should be before splitting to a new volume. Note: zfsbackup will try its best to stay close/under "+
 			"this limit but it is not guaranteed.",
 	)
-	sendCmd.Flags().IntVar(
-		&jobInfo.CompressionLevel,
-		"compressionLevel",
-		6,
-		"the compression level to use with the compressor. Valid values are between 1-9.",
-	)
 	sendCmd.Flags().BoolVar(
 		&jobInfo.Resume,
 		"resume",
@@ -118,15 +112,6 @@ func init() {
 		-1*time.Minute,
 		"set this flag to do an incremental backup of the most recent snapshot from the most recent snapshot found in the target unless the "+
 			"it's been greater than the time specified in this flag, then do a full backup.",
-	)
-	sendCmd.Flags().StringVar(
-		&jobInfo.Compressor,
-		"compressor",
-		files.InternalCompressor,
-		"specify to use the internal (parallel) gzip implementation or an external binary (e.g. gzip, bzip2, pigz, lzma, xz, etc.) Syntax "+
-			"must be similar to the gzip compression tool) to compress the stream for storage. Please take into consideration time, memory, "+
-			"and CPU usage for any of the compressors used. All manifests utilize the internal compressor. If value is zfs, the zfs stream "+
-			"will be created compressed. See the -c flag on zfs send for more information.",
 	)
 	sendCmd.Flags().IntVar(
 		&jobInfo.MaxFileBuffer,
@@ -188,7 +173,6 @@ func ResetSendJobInfo() {
 
 	// Specific to download only
 	jobInfo.VolumeSize = 200
-	jobInfo.CompressionLevel = 6
 	jobInfo.Resume = false
 	jobInfo.Full = false
 	jobInfo.Incremental = false
@@ -201,7 +185,6 @@ func ResetSendJobInfo() {
 	jobInfo.MaxBackoffTime = 30 * time.Minute
 	jobInfo.Separator = "|"
 	jobInfo.UploadChunkSize = 10
-	jobInfo.Compressor = files.InternalCompressor
 }
 
 // nolint:gocyclo,funlen // Will do later
