@@ -28,7 +28,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -342,10 +341,8 @@ func Backup(pctx context.Context, jobInfo *files.JobInfo) error {
 		lastChan := channels[len(channels)-1]
 		for {
 			select {
-			case vol, ok := <-lastChan:
-				if !ok {
-					return nil
-				}
+			case vol := <-lastChan:
+				vol.Close()
 				if !vol.IsManifest {
 					zap.S().Debugf("Volume %s has finished the entire pipeline.", vol.ObjectName)
 					zap.S().Debugf("Adding %s to the manifest volume list.", vol.ObjectName)
@@ -504,7 +501,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 			// Skip bytes if we are resuming
 			if skipBytes > 0 {
 				zap.S().Debugf("Want to skip %d bytes.", skipBytes)
-				written, serr := io.CopyN(ioutil.Discard, counter, int64(skipBytes))
+				written, serr := io.CopyN(io.Discard, counter, int64(skipBytes))
 				if serr != nil && serr != io.EOF {
 					zap.S().Errorf("Error while trying to read from the zfs stream to skip %d bytes - %v", skipBytes, serr)
 					return serr
@@ -543,7 +540,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 
 			// Write a little at a time and break the output between volumes as needed
 			_, ierr := io.CopyN(volume, counter, files.BufferSize*2)
-			if ierr == io.EOF {
+			if errors.Is(ierr, io.EOF) {
 				// We are done!
 				zap.S().Debugf("Finished creating volume %s", volume.ObjectName)
 				volume.ZFSStreamBytes = counter.Count() - lastTotalBytes
@@ -698,6 +695,9 @@ func retryUploadChainer(
 						return err
 					}
 					zap.S().Debugf("%s backend: Processed volume %s", prefix, vol.ObjectName)
+
+					vol.Close()
+
 					out <- vol
 				}
 			}

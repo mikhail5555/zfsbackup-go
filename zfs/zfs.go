@@ -156,10 +156,7 @@ func GetZFSSendCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 		}
 	}
 
-	zfsArgs = append(zfsArgs, fmt.Sprintf("%s@%s", j.VolumeName, j.BaseSnapshot.Name))
-	cmd := exec.CommandContext(ctx, ZFSPath, zfsArgs...)
-
-	return cmd
+	return exec.CommandContext(ctx, ZFSPath, append(zfsArgs, fmt.Sprintf("%s@%s", j.VolumeName, j.BaseSnapshot.Name))...)
 }
 
 // GetZFSReceiveCommand will return the recv command to use for the given JobInfo
@@ -192,8 +189,5 @@ func GetZFSReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 		zfsArgs = append(zfsArgs, "-o", "origin="+j.Origin)
 	}
 
-	zfsArgs = append(zfsArgs, j.LocalVolume)
-	cmd := exec.CommandContext(ctx, ZFSPath, zfsArgs...)
-
-	return cmd
+	return exec.CommandContext(ctx, ZFSPath, append(zfsArgs, j.LocalVolume)...)
 }
