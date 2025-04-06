@@ -21,7 +21,6 @@
 package backup
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5" // nolint:gosec // MD5 not used for cryptographic purposes here
 	"errors"
@@ -302,8 +301,6 @@ func Receive(ctx context.Context, jobInfo *files.JobInfo) error {
 	for i := 0; i < fileBufferSize; i++ {
 		wg.Go(func() error {
 			for sequence := range downloadChannel {
-				defer close(sequence.c)
-
 				be := backoff.NewExponentialBackOff()
 				be.MaxInterval = jobInfo.MaxBackoffTime
 				be.MaxElapsedTime = jobInfo.MaxRetryTime
@@ -321,8 +318,10 @@ func Receive(ctx context.Context, jobInfo *files.JobInfo) error {
 
 				if err := backoff.Retry(operation, retryconf); err != nil {
 					zap.S().Errorf("Failed to download volume %s due to error: %v, aborting...", sequence.volume.ObjectName, err)
+					close(sequence.c)
 					return err
 				}
+				close(sequence.c)
 			}
 			return nil
 		})
@@ -436,12 +435,10 @@ func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.Volume
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	buf := new(bytes.Buffer)
-
 	cmd := zfs.GetZFSReceiveCommand(ctx, j)
 	cin, cout := io.Pipe()
 	cmd.Stdin = cin
-	cmd.Stderr = buf
+	cmd.Stderr = os.Stderr
 
 	// Extract ZFS stream from files and send it to the zfs command
 	var group errgroup.Group
@@ -476,7 +473,7 @@ func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.Volume
 	// Start the zfs receive command
 	zap.S().Infof("Starting zfs receive command: %s", cmd.String())
 	if err := cmd.Run(); err != nil {
-		zap.S().Errorf("Error starting zfs command - %v: %s", err, buf.String())
+		zap.S().Errorf("Error starting zfs command - %v", err)
 		return err
 	}
 

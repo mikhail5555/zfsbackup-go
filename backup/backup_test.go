@@ -40,8 +40,14 @@ import (
 	"github.com/someone1/zfsbackup-go/zfs"
 )
 
-func fakeExecCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
-	cs := []string{"run", "./mock_zfs"}
+func fakeZfsSendCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
+	cs := []string{"run", "./mock_zfs/mock_send.go"}
+	cmd := exec.CommandContext(ctx, "go", cs...)
+	return cmd
+}
+
+func fakeZfsReceiveCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
+	cs := []string{"run", "./mock_zfs/mock_receive.go"}
 	cmd := exec.CommandContext(ctx, "go", cs...)
 	return cmd
 }
@@ -50,8 +56,11 @@ func SetupMocks(info files.SnapshotInfo) func() {
 	l, _ := zap.NewDevelopment()
 	zap.ReplaceGlobals(l)
 
-	origExecCommand := zfs.GetZFSSendCommand
-	zfs.GetZFSSendCommand = fakeExecCommand
+	origSendCommand := zfs.GetZFSSendCommand
+	zfs.GetZFSSendCommand = fakeZfsSendCommand
+
+	origReceiveCommand := zfs.GetZFSReceiveCommand
+	zfs.GetZFSReceiveCommand = fakeZfsReceiveCommand
 
 	origsSnapshotCommand := zfs.GetSnapshotsAndBookmarks
 	zfs.GetSnapshotsAndBookmarks = func(_ context.Context, _ string) ([]files.SnapshotInfo, error) {
@@ -64,7 +73,8 @@ func SetupMocks(info files.SnapshotInfo) func() {
 	}
 
 	return func() {
-		zfs.GetZFSSendCommand = origExecCommand
+		zfs.GetZFSSendCommand = origSendCommand
+		zfs.GetZFSReceiveCommand = origReceiveCommand
 		zfs.GetSnapshotsAndBookmarks = origsSnapshotCommand
 		zfs.GetCreationDate = origGetCreationDate
 	}
@@ -77,7 +87,7 @@ func TestBackup(t *testing.T) {
 	defer undo()
 	defer backends.MockBackendImpl.Reset()
 
-	tempDir := os.TempDir()
+	tempDir, _ := os.MkdirTemp("", "backup")
 	defer os.RemoveAll(tempDir)
 
 	config.WorkingDir = tempDir
@@ -116,7 +126,8 @@ func TestBackup(t *testing.T) {
 	}
 
 	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.gz.bin")
-	r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+	r, err := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+	assert.NoError(t, err)
 	defer r.Close()
 
 	manifestContent, err := io.ReadAll(r)
@@ -130,14 +141,19 @@ func TestBackup(t *testing.T) {
 	jobInfoFinished.ManifestObjectName()
 	for _, fileName := range uploadedFiles {
 		file, _ := backends.MockBackendImpl.Download(t.Context(), fileName)
-		r := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
-		defer r.Close()
+		r, err := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
+		assert.NoError(t, err)
 
 		content, err := io.ReadAll(r)
 		assert.NoError(t, err)
+		r.Close()
 
 		t.Logf("Read %s: %d", fileName, len(content))
 	}
 
 	t.Logf("Manifest content: %s", string(manifestContent))
+
+	// Run Receive
+	err = Receive(t.Context(), jobInfo)
+	assert.NoError(t, err)
 }

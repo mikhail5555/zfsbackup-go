@@ -5,102 +5,60 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/someone1/zfsbackup-go/compencrypt"
 )
 
 func TestCompressionAndDecompression(t *testing.T) {
-	// Test data
 	originalData := []byte("This is a test message that needs to be compressed and then decompressed.")
-
-	// Buffer to hold the compressed data
 	compressedBuffer := new(bytes.Buffer)
 
-	// Create a compression writer
-	compWriter := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
+	writer, err := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
+	assert.NoError(t, err)
 
-	// Write data to be compressed
-	n, err := compWriter.Write(originalData)
-	if err != nil {
-		t.Fatalf("Failed to compress data: %v", err)
-	}
-	if n != len(originalData) {
-		t.Fatalf("Expected to write %d bytes, but wrote %d", len(originalData), n)
-	}
+	n, err := writer.Write(originalData)
+	assert.NoError(t, err)
+	assert.Equal(t, len(originalData), n)
 
-	// Close the writer
-	if err := compWriter.Close(); err != nil {
-		t.Fatalf("Failed to close compression writer: %v", err)
-	}
+	assert.NoError(t, writer.Close())
 
-	// Create a decompression reader with the compressed data
-	decompReader := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
+	reader, err := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
+	assert.NoError(t, err)
 
-	// Read and decompress the data
-	decompressedData, err := io.ReadAll(decompReader)
-	if err != nil {
-		t.Fatalf("Failed to decompress data: %v", err)
-	}
+	decompressedData, err := io.ReadAll(reader)
+	assert.NoError(t, err)
 
-	// Close the reader
-	if err := decompReader.Close(); err != nil {
-		t.Fatalf("Failed to close decompression reader: %v", err)
-	}
-
-	// Verify the decompressed data matches the original
-	if !bytes.Equal(originalData, decompressedData) {
-		t.Fatalf("Decompressed data does not match original data.\nOriginal: %s\nDecompressed: %s",
-			string(originalData), string(decompressedData))
-	}
+	assert.NoError(t, reader.Close())
+	assert.Equal(t, originalData, decompressedData)
 }
 
 func TestLargeDataCompressionAndDecompression(t *testing.T) {
-	// Generate larger test data (1MB of repeating pattern for good compression)
 	originalData := make([]byte, 1024*1024)
 	for i := range originalData {
 		originalData[i] = byte(i % 64)
 	}
-
-	// Buffer to hold the compressed data
 	compressedBuffer := new(bytes.Buffer)
 
-	// Create a compression writer
-	compWriter := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
+	writer, err := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(compressedBuffer))
+	assert.NoError(t, err)
 
-	// Write data to be compressed
-	n, err := compWriter.Write(originalData)
-	if err != nil {
-		t.Fatalf("Failed to compress large data: %v", err)
-	}
-	if n != len(originalData) {
-		t.Fatalf("Expected to write %d bytes, but wrote %d", len(originalData), n)
-	}
+	n, err := writer.Write(originalData)
+	assert.NoError(t, err)
+	assert.Equal(t, len(originalData), n)
 
-	// Close the writer
-	if err := compWriter.Close(); err != nil {
-		t.Fatalf("Failed to close compression writer: %v", err)
-	}
+	assert.NoError(t, writer.Close())
 
-	// Print compression ratio
 	compressionRatio := float64(compressedBuffer.Len()) / float64(len(originalData))
-	t.Logf("Compressed %d bytes to %d bytes (%.2f%% of original size)",
-		len(originalData), compressedBuffer.Len(), compressionRatio*100)
+	t.Logf("Compressed %d bytes to %d bytes (%.2f%% of original size)", len(originalData), compressedBuffer.Len(), compressionRatio*100)
 
-	// Create a decompression reader with the compressed data
-	decompReader := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
+	reader, err := compencrypt.NewDecompressionReader(io.NopCloser(compressedBuffer))
+	assert.NoError(t, err)
 
-	// Read and decompress the data
-	decompressedData, err := io.ReadAll(decompReader)
-	if err != nil {
-		t.Fatalf("Failed to decompress large data: %v", err)
-	}
+	decompressedData, err := io.ReadAll(reader)
+	assert.NoError(t, err)
 
-	// Close the reader
-	if err := decompReader.Close(); err != nil {
-		t.Fatalf("Failed to close decompression reader: %v", err)
-	}
+	assert.NoError(t, reader.Close())
 
-	// Verify the decompressed data matches the original
-	if !bytes.Equal(originalData, decompressedData) {
-		t.Fatalf("Decompressed large data does not match original data")
-	}
+	assert.Equal(t, originalData, decompressedData)
 }

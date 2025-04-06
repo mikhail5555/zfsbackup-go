@@ -32,7 +32,7 @@ import (
 	"github.com/someone1/zfsbackup-go/files"
 )
 
-var MockBackendImpl = &MockBackend{}
+var MockBackendImpl = &MockBackend{inMemoryStore: sync.Map{}}
 
 // MockBackendPrefix is the URI prefix used for the MockBackend.
 const MockBackendPrefix = "Mock"
@@ -46,7 +46,6 @@ type MockBackend struct {
 
 // Init will initialize the MockBackend (aka do nothing)
 func (d *MockBackend) Init(ctx context.Context, conf *BackendConfig, opts ...Option) error {
-	d.inMemoryStore = sync.Map{}
 	return nil
 }
 

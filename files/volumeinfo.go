@@ -22,7 +22,6 @@ package files
 
 import (
 	"bufio"
-	"compress/gzip"
 	"context"
 	"crypto/md5"  // nolint:gosec // MD5 not used for cryptographic purposes here
 	"crypto/sha1" // nolint:gosec // SHA1 not used for cryptographic purposes here
@@ -43,16 +42,9 @@ import (
 	"github.com/someone1/zfsbackup-go/config"
 )
 
-var (
-	printCompressCMD sync.Once
-)
-
 const (
 	// BufferSize is the size of various buffers and copy limits around the application
 	BufferSize = 256 * humanize.KiByte // 256KiB
-	// InternalCompressor is the key used to indicate we want to utilize the internal compressor
-	InternalCompressor = "internal"
-	ZfsCompressor      = "zfs"
 )
 
 // VolumeInfo holds all necessary information for a Volume as part of a backup
@@ -87,7 +79,7 @@ type VolumeInfo struct {
 	rw io.ReadCloser
 	// PGP objects
 	pgpw io.WriteCloser
-	pgpr *compencrypt.DecryptionReader
+	pgpr io.ReadCloser
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -185,17 +177,20 @@ func (v *VolumeInfo) Extract(j *JobInfo) error {
 	}
 
 	if len(j.AesEncryptionKey) > 0 {
-		decryptionReader := compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
+		decryptionReader, err := compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
+		if err != nil {
+			return err
+		}
 		v.pgpr = decryptionReader
 		v.r = decryptionReader
 	}
 
-	var err error
-	v.rw, err = gzip.NewReader(v.r)
+	decompressionReader, err := compencrypt.NewDecompressionReader(io.NopCloser(v.r))
 	if err != nil {
 		return err
 	}
-	v.r = v.rw
+	v.rw = decompressionReader
+	v.r = decompressionReader
 
 	return nil
 }
@@ -357,12 +352,20 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, err
 	}
 
 	if len(j.AesEncryptionKey) > 0 {
-		v.pgpw = compencrypt.NewEncryptionWriter(compencrypt.NopWriteCloser(v.w), []byte(j.AesEncryptionKey))
-		v.w = v.pgpw
+		encryptionWriter, err := compencrypt.NewEncryptionWriter(compencrypt.NopWriteCloser(v.w), []byte(j.AesEncryptionKey))
+		if err != nil {
+			return nil, err
+		}
+		v.pgpw = encryptionWriter
+		v.w = encryptionWriter
 	}
 
-	v.cw, _ = gzip.NewWriterLevel(v.w, 6)
-	v.w = v.cw
+	compressionWriter, err := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(v.w))
+	if err != nil {
+		return nil, err
+	}
+	v.cw = compressionWriter
+	v.w = compressionWriter
 
 	return v, nil
 }

@@ -5,117 +5,52 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"io"
-	"sync"
 )
 
-var _ io.WriteCloser = (*EncryptionWriter)(nil)
+type EncryptionWriter cipher.StreamWriter
 
-type EncryptionWriter struct {
-	w           io.WriteCloser
-	destination io.WriteCloser
-	key         []byte
-	once        sync.Once
-}
-
-func NewEncryptionWriter(destination io.WriteCloser, key []byte) *EncryptionWriter {
-	return &EncryptionWriter{
-		destination: destination,
-		key:         key,
-	}
-}
-
-func (ew *EncryptionWriter) Write(p []byte) (int, error) {
-	var onceErr error
-	ew.once.Do(func() {
-		if len(ew.key) == 0 {
-			ew.w = ew.destination
-			return
-		}
-
-		block, err := aes.NewCipher(ew.key)
-		if err != nil {
-			onceErr = err
-			return
-		}
-
-		iv := make([]byte, aes.BlockSize)
-		if _, err := rand.Read(iv); err != nil {
-			onceErr = err
-			return
-		}
-
-		stream := cipher.NewCTR(block, iv)
-
-		if _, err := ew.destination.Write(iv); err != nil {
-			onceErr = err
-			return
-		}
-
-		ew.w = cipher.StreamWriter{S: stream, W: ew.destination}
-	})
-
-	if onceErr != nil {
-		return 0, onceErr
+func NewEncryptionWriter(destination io.WriteCloser, key []byte) (io.WriteCloser, error) {
+	if len(key) == 0 {
+		return destination, nil
 	}
 
-	return ew.w.Write(p)
-}
-
-func (ew *EncryptionWriter) Close() error {
-	if ew.w != nil {
-		return ew.w.Close()
-	}
-	return ew.destination.Close()
-}
-
-var _ io.ReadCloser = (*DecryptionReader)(nil)
-
-type DecryptionReader struct {
-	r      io.Reader
-	source io.ReadCloser
-	key    []byte
-	once   sync.Once
-}
-
-func (dr *DecryptionReader) Close() error {
-	return dr.source.Close()
-}
-
-func NewDecryptionReader(source io.ReadCloser, key []byte) *DecryptionReader {
-	return &DecryptionReader{
-		source: source,
-		key:    key,
-	}
-}
-
-func (dr *DecryptionReader) Read(p []byte) (int, error) {
-	var onceErr error
-	dr.once.Do(func() {
-		if len(dr.key) == 0 {
-			dr.r = dr.source
-			return
-		}
-
-		block, err := aes.NewCipher(dr.key)
-		if err != nil {
-			onceErr = err
-			return
-		}
-
-		iv := make([]byte, aes.BlockSize)
-		if _, err := io.ReadFull(dr.source, iv); err != nil {
-			onceErr = err
-			return
-		}
-
-		stream := cipher.NewCTR(block, iv)
-		dr.r = &cipher.StreamReader{S: stream, R: dr.source}
-	})
-	if onceErr != nil {
-		return 0, onceErr
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
 	}
 
-	return dr.r.Read(p)
+	iv := make([]byte, aes.BlockSize)
+	if _, err := rand.Read(iv); err != nil {
+		return nil, err
+	}
+
+	stream := cipher.NewCTR(block, iv)
+	if _, err := destination.Write(iv); err != nil {
+		return nil, err
+	}
+
+	return cipher.StreamWriter{S: stream, W: destination}, nil
+}
+
+type DecryptionReader cipher.StreamReader
+
+func NewDecryptionReader(source io.ReadCloser, key []byte) (io.ReadCloser, error) {
+	if len(key) == 0 {
+		return source, nil
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(source, iv); err != nil {
+		return nil, err
+	}
+
+	stream := cipher.NewCTR(block, iv)
+	return io.NopCloser(cipher.StreamReader{S: stream, R: source}), nil
 }
 
 func NopWriteCloser(w io.Writer) io.WriteCloser {

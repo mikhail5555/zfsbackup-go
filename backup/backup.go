@@ -21,7 +21,6 @@
 package backup
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // Not used for cryptography
 	"encoding/json"
@@ -476,11 +475,10 @@ func saveManifest(ctx context.Context, j *files.JobInfo, final bool) (*files.Vol
 func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInfo, buffer <-chan bool) error {
 	group, ctx := errgroup.WithContext(ctx)
 
-	buf := new(bytes.Buffer)
 	cmd := zfs.GetZFSSendCommand(ctx, j)
 	cin, cout := io.Pipe()
 	cmd.Stdout = cout
-	cmd.Stderr = buf
+	cmd.Stderr = os.Stderr
 	counter := datacounter.NewReaderCounter(cin)
 	usingPipe := false
 	if j.MaxFileBuffer == 0 {
@@ -588,7 +586,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 	// Wait for the command to finish
 
 	if err := group.Wait(); err != nil {
-		zap.S().Errorf("Error waiting for zfs command to finish - %v: %s", err, buf.String())
+		zap.S().Errorf("Error waiting for zfs command to finish - %v", err)
 		return err
 	}
 	zap.S().Infof("zfs send completed without error")
