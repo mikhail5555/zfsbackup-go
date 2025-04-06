@@ -50,8 +50,6 @@ var sendCmd = &cobra.Command{
 	Long:    `send take a subset of the`,
 	PreRunE: validateSendFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		zap.S().Debugf("jobInfo: %+v", jobInfo)
-
 		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
 		zap.S().Infof("Limiting the number of parallel uploads to %d", jobInfo.MaxParallelUploads)
 		zap.S().Infof("Max Backoff Time will be %v", jobInfo.MaxBackoffTime)

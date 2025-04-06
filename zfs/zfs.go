@@ -197,9 +197,5 @@ func getZFSReceiveCommand(ctx context.Context, j *files.JobInfo) *exec.Cmd {
 		zfsArgs = append(zfsArgs, "-o", "origin="+j.Origin)
 	}
 
-	args := append(zfsArgs, j.LocalVolume)
-
-	zap.S().Infof("Executing command: %v", args)
-
-	return exec.CommandContext(ctx, ZFSPath, args...)
+	return exec.CommandContext(ctx, ZFSPath, append(zfsArgs, j.LocalVolume)...)
 }

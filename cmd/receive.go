@@ -42,8 +42,6 @@ var receiveCmd = &cobra.Command{
 	Long:    `receive will restore a snapshot of a ZFS volume similar to how the "zfs recv" command works.`,
 	PreRunE: validateReceiveFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		zap.S().Debugf("jobInfo: %+v", jobInfo)
-
 		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
 
 		if jobInfo.AutoRestore {
