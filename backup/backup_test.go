@@ -108,34 +108,25 @@ func TestBackup(t *testing.T) {
 		AesEncryptionKey:   "test1234test1234",
 	}
 
-	// Run the backup
 	err := Backup(t.Context(), jobInfo)
 	assert.NoError(t, err)
 
-	// Verify results
-	if len(jobInfo.Volumes) == 0 {
-		t.Errorf("Expected at least one volume to be created")
-	}
-
-	// Check that ZFS stream bytes were recorded
-	if jobInfo.ZFSStreamBytes == 0 {
-		t.Errorf("Expected ZFS stream bytes to be recorded")
-	}
-
-	// Verify that the manifest was created
-	if !jobInfo.EndTime.After(jobInfo.StartTime) {
-		t.Errorf("Expected end time to be after start time")
-	}
+	assert.NotZero(t, len(jobInfo.Volumes), "Expected at least one volume to be created")
+	assert.NotZero(t, jobInfo.ZFSStreamBytes, "Expected ZFS stream bytes to be recorded")
+	assert.True(t, jobInfo.EndTime.After(jobInfo.StartTime), "Expected end time to be after start time")
 
 	file, _ := backends.MockBackendImpl.Download(t.Context(), "tank/testtank/test@snap1.manifest.gz.bin")
 	r, err := compencrypt.NewDecryptAndDecompressReader(file, []byte(jobInfo.AesEncryptionKey))
 	assert.NoError(t, err)
-	defer r.Close()
 
 	manifestContent, err := io.ReadAll(r)
 	assert.NoError(t, err)
+	assert.NoError(t, r.Close())
+
 	var jobInfoFinished files.JobInfo
 	assert.NoError(t, json.Unmarshal(manifestContent, &jobInfoFinished))
+
+	t.Logf("Manifest content: %s", string(manifestContent))
 
 	uploadedFiles, _ := backends.MockBackendImpl.List(t.Context(), "")
 	assert.Len(t, uploadedFiles, len(jobInfoFinished.Volumes)+1)
@@ -148,14 +139,11 @@ func TestBackup(t *testing.T) {
 
 		content, err := io.ReadAll(r)
 		assert.NoError(t, err)
-		r.Close()
+		assert.NoError(t, r.Close())
 
 		t.Logf("Read %s: %d", fileName, len(content))
 	}
 
-	t.Logf("Manifest content: %s", string(manifestContent))
-
-	// Run Receive
 	err = Receive(t.Context(), jobInfo)
 	assert.NoError(t, err)
 }

@@ -77,9 +77,6 @@ type VolumeInfo struct {
 	// (de)compressor objects
 	cw io.WriteCloser
 	rw io.ReadCloser
-	// PGP objects
-	pgpw io.WriteCloser
-	pgpr io.ReadCloser
 	// Detail Objects
 	counter   *datacounter.WriterCounter
 	usingPipe bool
@@ -176,21 +173,12 @@ func (v *VolumeInfo) Extract(j *JobInfo) error {
 		v.isOpened = true
 	}
 
-	if len(j.AesEncryptionKey) > 0 {
-		decryptionReader, err := compencrypt.NewDecryptionReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
-		if err != nil {
-			return err
-		}
-		v.pgpr = decryptionReader
-		v.r = decryptionReader
-	}
-
-	decompressionReader, err := compencrypt.NewDecompressionReader(io.NopCloser(v.r))
+	reader, err := compencrypt.NewDecryptAndDecompressReader(io.NopCloser(v.r), []byte(j.AesEncryptionKey))
 	if err != nil {
 		return err
 	}
-	v.rw = decompressionReader
-	v.r = decompressionReader
+	v.rw = reader
+	v.r = reader
 
 	return nil
 }
@@ -246,23 +234,9 @@ func (v *VolumeInfo) Close() error {
 		}
 	}
 
-	// Close the (de/en)crypter, if any
-	if v.pgpw != nil || v.pgpr != nil {
-		if v.pgpw != nil {
-			if err := v.pgpw.Close(); err != nil {
-				return err
-			}
-			v.pgpw = nil
-		}
-
-		if v.pgpr != nil {
-			v.pgpw = nil
-		}
-	}
-
 	// Flush the buffered writer
 	if v.bufw != nil {
-		v.bufw.Flush()
+		_ = v.bufw.Flush()
 		v.bufw = nil
 	}
 
@@ -351,21 +325,12 @@ func prepareVolume(ctx context.Context, j *JobInfo, pipe bool) (*VolumeInfo, err
 		return nil, err
 	}
 
-	if len(j.AesEncryptionKey) > 0 {
-		encryptionWriter, err := compencrypt.NewEncryptionWriter(compencrypt.NopWriteCloser(v.w), []byte(j.AesEncryptionKey))
-		if err != nil {
-			return nil, err
-		}
-		v.pgpw = encryptionWriter
-		v.w = encryptionWriter
-	}
-
-	compressionWriter, err := compencrypt.NewCompressionWriter(compencrypt.NopWriteCloser(v.w))
+	writer, err := compencrypt.NewCompressAndEncryptWriter(compencrypt.NopWriteCloser(v.w), []byte(j.AesEncryptionKey))
 	if err != nil {
 		return nil, err
 	}
-	v.cw = compressionWriter
-	v.w = compressionWriter
+	v.cw = writer
+	v.w = writer
 
 	return v, nil
 }
