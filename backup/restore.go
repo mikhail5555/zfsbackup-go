@@ -338,7 +338,7 @@ func Receive(ctx context.Context, jobInfo *files.JobInfo) error {
 
 	// Prepare ZFS Receive command
 	wg.Go(func() error {
-		return receiveStream(ctx, manifest, orderedVolumes)
+		return receiveStream(ctx, jobInfo, manifest, orderedVolumes)
 	})
 
 	// Queue up files to download
@@ -425,11 +425,11 @@ func processSequence(ctx context.Context, sequence downloadSequence, backend bac
 	return nil
 }
 
-func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.VolumeInfo) error {
+func receiveStream(ctx context.Context, jobInfo *files.JobInfo, manifest *files.JobInfo, c <-chan *files.VolumeInfo) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	cmd := zfs.GetZFSReceiveCommand(ctx, j)
+	cmd := zfs.GetZFSReceiveCommand(ctx, jobInfo)
 	cin, cout := io.Pipe()
 	cmd.Stdin = cin
 	cmd.Stderr = os.Stderr
@@ -441,9 +441,9 @@ func receiveStream(ctx context.Context, j *files.JobInfo, c <-chan *files.Volume
 		for vol := range c {
 			zap.S().Debugf("Processing %s.", vol.ObjectName)
 
-			if eerr := vol.Extract(j); eerr != nil {
-				zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, eerr)
-				return eerr
+			if err := vol.Extract(manifest); err != nil {
+				zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, err)
+				return err
 			}
 
 			if _, err := io.Copy(cout, vol); err != nil {
