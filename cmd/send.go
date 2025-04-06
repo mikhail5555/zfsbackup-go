@@ -50,6 +50,8 @@ var sendCmd = &cobra.Command{
 	Long:    `send take a subset of the`,
 	PreRunE: validateSendFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		zap.S().Debug("jobInfo", zap.Any("jobInfo", jobInfo))
+
 		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
 		zap.S().Infof("Limiting the number of parallel uploads to %d", jobInfo.MaxParallelUploads)
 		zap.S().Infof("Max Backoff Time will be %v", jobInfo.MaxBackoffTime)
@@ -188,7 +190,7 @@ func ResetSendJobInfo() {
 }
 
 // nolint:gocyclo,funlen // Will do later
-func updateJobInfo(args []string) error {
+func updateJobInfo(ctx context.Context, args []string) error {
 	jobInfo.StartTime = time.Now()
 	jobInfo.Version = config.VersionNumber
 
@@ -224,7 +226,7 @@ func updateJobInfo(args []string) error {
 			return errInvalidInput
 		}
 		jobInfo.BaseSnapshot = files.SnapshotInfo{Name: parts[1]}
-		creationTime, err := zfs.GetCreationDate(context.TODO(), args[0])
+		creationTime, err := zfs.GetCreationDate(ctx, args[0])
 		if err != nil {
 			zap.S().Errorf("Error trying to get creation date of specified base snapshot - %v", err)
 			return err
@@ -243,7 +245,7 @@ func updateJobInfo(args []string) error {
 				targetName = fmt.Sprintf("%s@%s", jobInfo.VolumeName, jobInfo.IncrementalSnapshot.Name)
 			}
 
-			creationTime, err = zfs.GetCreationDate(context.TODO(), targetName)
+			creationTime, err = zfs.GetCreationDate(ctx, targetName)
 			if err != nil {
 				zap.S().Errorf("Error trying to get creation date of specified incremental snapshot/bookmark - %v", err)
 				return err
@@ -270,7 +272,7 @@ func updateJobInfo(args []string) error {
 			zap.S().Errorf("When using a smart option, please only specify the volume to backup, do not include any snapshot information.")
 			return errInvalidInput
 		}
-		if err := backup.ProcessSmartOptions(context.Background(), &jobInfo); err != nil {
+		if err := backup.ProcessSmartOptions(ctx, &jobInfo); err != nil {
 			zap.S().Errorf("Error while trying to process smart option - %v", err)
 			return err
 		}
@@ -300,5 +302,5 @@ func validateSendFlags(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return updateJobInfo(args)
+	return updateJobInfo(cmd.Context(), args)
 }

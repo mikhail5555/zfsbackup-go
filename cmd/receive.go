@@ -21,7 +21,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,11 +42,14 @@ var receiveCmd = &cobra.Command{
 	Long:    `receive will restore a snapshot of a ZFS volume similar to how the "zfs recv" command works.`,
 	PreRunE: validateReceiveFlags,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		zap.S().Debug("jobInfo", zap.Any("jobInfo", jobInfo))
+
 		zap.S().Infof("Limiting the number of active files to %d", jobInfo.MaxFileBuffer)
 
 		if jobInfo.AutoRestore {
 			return backup.AutoRestore(cmd.Context(), &jobInfo)
 		}
+
 		return backup.Receive(cmd.Context(), &jobInfo)
 	},
 }
@@ -186,14 +188,14 @@ func validateReceiveFlags(cmd *cobra.Command, args []string) error {
 
 	if !jobInfo.AutoRestore {
 		// Let's see if we already have this snap shot
-		creationTime, err := zfs.GetCreationDate(context.TODO(), fmt.Sprintf("%s@%s", jobInfo.LocalVolume, jobInfo.BaseSnapshot.Name))
+		creationTime, err := zfs.GetCreationDate(cmd.Context(), fmt.Sprintf("%s@%s", jobInfo.LocalVolume, jobInfo.BaseSnapshot.Name))
 		if err == nil {
 			jobInfo.BaseSnapshot.CreationTime = creationTime
 		}
 		if jobInfo.IncrementalSnapshot.Name != "" {
 			jobInfo.IncrementalSnapshot.Name = strings.TrimPrefix(jobInfo.IncrementalSnapshot.Name, jobInfo.VolumeName)
 			jobInfo.IncrementalSnapshot.Name = strings.TrimPrefix(jobInfo.IncrementalSnapshot.Name, "@")
-			creationTime, err = zfs.GetCreationDate(context.TODO(), fmt.Sprintf("%s@%s", jobInfo.LocalVolume, jobInfo.IncrementalSnapshot.Name))
+			creationTime, err = zfs.GetCreationDate(cmd.Context(), fmt.Sprintf("%s@%s", jobInfo.LocalVolume, jobInfo.IncrementalSnapshot.Name))
 			if err == nil {
 				jobInfo.IncrementalSnapshot.CreationTime = creationTime
 			}

@@ -48,10 +48,7 @@ type downloadSequence struct {
 // AutoRestore will compute which snapshots need to be restored to get to the snapshot provided,
 // or to the latest snapshot of the volume provided
 // nolint:funlen,gocyclo // Difficult to break this up
-func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
-	ctx, cancel := context.WithCancel(pctx)
-	defer cancel()
-
+func AutoRestore(ctx context.Context, jobInfo *files.JobInfo) error {
 	// Prepare the backend client
 	target := jobInfo.Destinations[0]
 	backend, berr := prepareBackend(ctx, jobInfo, target, nil)
@@ -188,9 +185,6 @@ func AutoRestore(pctx context.Context, jobInfo *files.JobInfo) error {
 // Receive will download and restore the backup job described to the Volume target provided.
 // nolint:funlen,gocyclo // Difficult to break this up
 func Receive(ctx context.Context, jobInfo *files.JobInfo) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	target := jobInfo.Destinations[0]
 
 	// Prepare the backend client
