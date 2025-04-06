@@ -41,14 +41,16 @@ import (
 )
 
 func fakeZfsSendCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
-	cs := []string{"run", "./mock_zfs/mock_send.go"}
+	cs := []string{"run", "./mock_zfs/mock.go"}
 	cmd := exec.CommandContext(ctx, "go", cs...)
+	cmd.Env = append(os.Environ(), "MODE=SEND")
 	return cmd
 }
 
 func fakeZfsReceiveCommand(ctx context.Context, _ *files.JobInfo) *exec.Cmd {
-	cs := []string{"run", "./mock_zfs/mock_receive.go"}
+	cs := []string{"run", "./mock_zfs/mock.go"}
 	cmd := exec.CommandContext(ctx, "go", cs...)
+	cmd.Env = append(os.Environ(), "MODE=RECEIVE")
 	return cmd
 }
 
