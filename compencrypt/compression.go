@@ -1,22 +1,30 @@
 package compencrypt
 
 import (
-	"compress/gzip"
 	"io"
+
+	"github.com/klauspost/compress/zstd"
 )
 
-type CompressionWriter gzip.Writer
+type CompressionWriter zstd.Encoder
 
 func NewCompressionWriter(destination io.WriteCloser) (io.WriteCloser, error) {
-	return gzip.NewWriter(destination), nil
+	return zstd.NewWriter(destination)
 }
 
-type DecompressionReader gzip.Reader
+type DecompressionReader struct {
+	*zstd.Decoder
+}
 
 func NewDecompressionReader(source io.ReadCloser) (io.ReadCloser, error) {
-	r, err := gzip.NewReader(source)
+	reader, err := zstd.NewReader(source)
 	if err != nil {
 		return nil, err
 	}
-	return r, nil
+	return &DecompressionReader{reader}, nil
+}
+
+func (r *DecompressionReader) Close() error {
+	r.Decoder.Close()
+	return nil
 }
