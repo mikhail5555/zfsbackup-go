@@ -34,7 +34,7 @@ func TestCompressionAndDecompression(t *testing.T) {
 }
 
 func TestLargeDataCompressionAndDecompression(t *testing.T) {
-	originalData := make([]byte, 1024*1024)
+	originalData := make([]byte, 1024*1024-1)
 	for i := range originalData {
 		originalData[i] = byte(i % 64)
 	}
