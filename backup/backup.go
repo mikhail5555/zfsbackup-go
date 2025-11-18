@@ -38,6 +38,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/miolini/datacounter"
 	"github.com/nightlyone/lockfile"
+	"github.com/schollz/progressbar/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
@@ -485,6 +486,11 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 		usingPipe = true
 	}
 
+	var bar = io.Discard
+	if j.ProgressBar {
+		bar = progressbar.DefaultBytes(-1, "uploading")
+	}
+
 	group.Go(func() error {
 		var lastTotalBytes uint64
 		defer close(c)
@@ -534,7 +540,7 @@ func sendStream(ctx context.Context, j *files.JobInfo, c chan<- *files.VolumeInf
 			}
 
 			// Write a little at a time and break the output between volumes as needed
-			_, ierr := io.CopyN(volume, counter, files.BufferSize*2)
+			_, ierr := io.CopyN(io.MultiWriter(volume, bar), counter, files.BufferSize*2)
 			if errors.Is(ierr, io.EOF) {
 				// We are done!
 				zap.S().Debugf("Finished creating volume %s", volume.ObjectName)

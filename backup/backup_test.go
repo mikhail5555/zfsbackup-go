@@ -106,6 +106,7 @@ func TestBackup(t *testing.T) {
 		MaxRetryTime:       1 * time.Second,
 		StartTime:          time.Now(),
 		AesEncryptionKey:   "test1234test1234",
+		ProgressBar:        true,
 	}
 
 	err := Backup(t.Context(), jobInfo)

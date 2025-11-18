@@ -130,6 +130,12 @@ func init() {
 		"|",
 		"the separator to use between object component names (used only for the initial manifest we are looking for).",
 	)
+	receiveCmd.Flags().BoolVar(
+		&jobInfo.ProgressBar,
+		"progressBar",
+		true,
+		"Enable progressbar during upload.",
+	)
 }
 
 // ResetReceiveJobInfo exists solely for integration testing

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
+	"github.com/schollz/progressbar/v3"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
@@ -74,6 +75,7 @@ func AutoRestore(ctx context.Context, jobInfo *files.JobInfo) error {
 
 	decodedManifests, derr := readAndSortManifests(ctx, localCachePath, safeManifests, jobInfo)
 	if derr != nil {
+		zap.S().Errorf("Could not decode manifests: %v", derr)
 		return derr
 	}
 	manifestTree := linkManifests(decodedManifests)
@@ -87,7 +89,7 @@ func AutoRestore(ctx context.Context, jobInfo *files.JobInfo) error {
 	// Restore to the latest snapshot available for the volume provided if no snapshot was provided
 	if jobInfo.BaseSnapshot.Name == "" {
 		zap.S().Infof("Trying to determine latest snapshot for volume %s.", jobInfo.VolumeName)
-		jobInfo.BaseSnapshot = (volumeSnaps[len(volumeSnaps)-1].BaseSnapshot)
+		jobInfo.BaseSnapshot = volumeSnaps[len(volumeSnaps)-1].BaseSnapshot
 		zap.S().Infof("Restoring to snapshot %s.", jobInfo.BaseSnapshot.Name)
 	}
 
@@ -434,6 +436,11 @@ func receiveStream(ctx context.Context, jobInfo *files.JobInfo, manifest *files.
 	cmd.Stdin = cin
 	cmd.Stderr = os.Stderr
 
+	var bar = io.Discard
+	if manifest.ProgressBar {
+		bar = progressbar.DefaultBytes(-1, "uploading")
+	}
+
 	// Extract ZFS stream from files and send it to the zfs command
 	var group errgroup.Group
 	group.Go(func() error {
@@ -446,7 +453,7 @@ func receiveStream(ctx context.Context, jobInfo *files.JobInfo, manifest *files.
 				return err
 			}
 
-			if _, err := io.Copy(cout, vol); err != nil {
+			if _, err := io.Copy(io.MultiWriter(cout, bar), vol); err != nil {
 				zap.S().Errorf("Error while trying to read from volume %s - %v", vol.ObjectName, err)
 				return err
 			}

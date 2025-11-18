@@ -53,6 +53,7 @@ type JobInfo struct {
 	Properties              bool
 	IntermediaryIncremental bool
 	Resume                  bool `json:"-"`
+	ProgressBar             bool `json:"-"`
 	// "Smart" Options
 	Full            bool          `json:"-"`
 	Incremental     bool          `json:"-"`

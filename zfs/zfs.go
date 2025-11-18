@@ -65,14 +65,16 @@ func getSnapshotsAndBookmarks(ctx context.Context, target string) ([]files.Snaps
 	)
 	zap.S().Debugf("Getting ZFS Snapshots with command \"%s\"", strings.Join(cmd.Args, " "))
 	cmd.Stderr = errB
+
 	rpipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
 	}
-	err = cmd.Start()
-	if err != nil {
+
+	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("%s (%v)", strings.TrimSpace(errB.String()), err)
 	}
+
 	var snapshots []files.SnapshotInfo
 	for {
 		snapInfo := files.SnapshotInfo{}
