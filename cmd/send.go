@@ -157,7 +157,7 @@ func init() {
 		10,
 		"the chunk size, in MiB, to use when uploading. A minimum of 5MiB and maximum of 100MiB is enforced.",
 	)
-	receiveCmd.Flags().BoolVar(
+	sendCmd.Flags().BoolVar(
 		&jobInfo.ProgressBar,
 		"progressBar",
 		true,
